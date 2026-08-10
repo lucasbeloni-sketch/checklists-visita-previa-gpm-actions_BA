@@ -1,0 +1,83 @@
+name: Backfill dias perdidos (manual)
+
+# Só manual: recuperar os dias que a Skill perdeu (Data Fim caindo as 00:00) é
+# operacao pontual, nao rotina. Ver README > "Backfill dos dias perdidos".
+on:
+  workflow_dispatch:
+    inputs:
+      dias:
+        description: 'Dias especificos (dd/mm/aaaa, separados por virgula). Vazio = todos os buracos detectados na pasta.'
+        type: string
+        default: ""
+      dry_run:
+        description: "Ensaio: exporta e mostra o que mudaria, sem gravar no Drive"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+# Mesmo grupo do workflow diario: os dois escrevem nos mesmos arquivos do Drive,
+# nao podem rodar ao mesmo tempo.
+concurrency:
+  group: checklists-visita-previa-ba
+  cancel-in-progress: false
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    # Cada dia e um export no GPM; 31 dias levam bem mais que os 20min do diario.
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "20"
+
+      - name: Install deps
+        run: npm ci || npm install
+
+      - name: Testes unitarios
+        run: npm test
+
+      - name: Install Chromium (Playwright)
+        run: npx playwright install --with-deps chromium
+
+      # Escopo primeiro: le so o Drive e lista os buracos, sem tocar no GPM.
+      - name: Escopo - dias faltando na pasta
+        run: npm run faltantes
+        env:
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+
+      - name: Backfill
+        shell: bash
+        run: set -o pipefail; npm run backfill 2>&1 | tee backfill.log
+        env:
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          GPM_BA_USER: ${{ secrets.GPM_BA_USER }}
+          GPM_BA_PASS: ${{ secrets.GPM_BA_PASS }}
+          GPM_USER: ${{ secrets.GPM_USER }}
+          GPM_PASS: ${{ secrets.GPM_PASS }}
+          DIAS: ${{ inputs.dias }}
+          DRY_RUN: ${{ inputs.dry_run && '1' || '' }}
+
+      # O manifesto (dia;arquivo;status;linhas) fica no log; sobe sempre, mesmo
+      # se um dia falhou no meio — e o registro de o que entrou e o que nao.
+      - name: Upload log + manifesto
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backfill-log
+          path: backfill.log
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Upload artefatos de debug (em caso de falha)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug
+          path: debug/
+          if-no-files-found: ignore
+          retention-days: 7
