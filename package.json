@@ -1,0 +1,18 @@
+{
+  "name": "checklists-visita-previa-gpm-actions",
+  "version": "1.0.0",
+  "private": true,
+  "type": "commonjs",
+  "description": "Baixa o relatorio Checklists Pergunta/Resposta (Visita Previa) do GPM BA (headless) e envia o CSV mm.aaaa.csv ao Google Drive.",
+  "scripts": {
+    "start": "node src/baixar.js",
+    "test": "node --test",
+    "inspect": "node tools/inspect.js",
+    "check": "node tools/check-drive.js"
+  },
+  "dependencies": {
+    "adm-zip": "^0.5.16",
+    "googleapis": "^144.0.0",
+    "playwright": "^1.49.0"
+  }
+}

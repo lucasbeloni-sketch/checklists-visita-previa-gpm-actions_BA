@@ -1,0 +1,82 @@
+name: Checklists Visita Previa GPM BA
+
+on:
+  schedule:
+    - cron: "0 */6 * * *"   # a cada 6h (UTC): 00/06/12/18 UTC = 21/03/09/15 BRT
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Baixa e valida, mas NAO envia ao Drive"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  issues: write              # pra abrir/comentar issue de falha
+
+# Evita 2 runs simultaneos (cron + manual) escrevendo o mesmo arquivo do mes.
+concurrency:
+  group: checklists-visita-previa-ba
+  cancel-in-progress: false
+
+jobs:
+  baixar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "20"
+
+      - name: Install deps
+        run: npm ci || npm install
+
+      - name: Testes unitarios
+        run: npm test
+
+      - name: Install Chromium (Playwright)
+        run: npx playwright install --with-deps chromium
+
+      # login no GPM BA -> exporta Checklists Pergunta/Resposta (D-1)
+      # -> extrai CSV do zip -> sobrescreve mm.aaaa.csv em Checklists_Visita_Previa.
+      - name: Baixa checklists e envia ao Drive
+        run: npm start
+        env:
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          GPM_BA_USER: ${{ secrets.GPM_BA_USER }}
+          GPM_BA_PASS: ${{ secrets.GPM_BA_PASS }}
+          # Fallback: se os secrets BA nao existirem, o codigo usa estes.
+          GPM_USER: ${{ secrets.GPM_USER }}
+          GPM_PASS: ${{ secrets.GPM_PASS }}
+          DRY_RUN: ${{ inputs.dry_run && '1' || '' }}
+
+      - name: Upload artefatos de debug (em caso de falha)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug
+          path: debug/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # Notifica falha: mantem 1 issue rolante (comenta se ja existe, senao abre).
+  notify:
+    needs: baixar
+    if: failure()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "checklists-falha";
+            const url = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const { owner, repo } = context.repo;
+            const open = await github.rest.issues.listForRepo({ owner, repo, state: "open", labels: label });
+            const body = `Rotina Checklists Visita Previa (GPM BA) falhou no run ${context.runId}.\n\nLog: ${url}\n\nO arquivo mm.aaaa.csv do mes pode estar desatualizado ate o proximo run dar certo. Baixe o artefato "debug" do run pra ver screenshot + HTML da tela no momento da falha.`;
+            if (open.data.length) {
+              await github.rest.issues.createComment({ owner, repo, issue_number: open.data[0].number, body });
+            } else {
+              await github.rest.issues.create({ owner, repo, title: "Checklists Visita Previa GPM BA falhando", body, labels: [label] });
+            }

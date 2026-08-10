@@ -1,0 +1,35 @@
+{
+  "_comentario_unidade": "ATENCAO: esta e a unidade BA (sirtecba), diferente das Skills/repos irmaos de CE (sirtecce). Credenciais podem ser outras: o codigo usa GPM_BA_USER/GPM_BA_PASS e cai pra GPM_USER/GPM_PASS se as BA nao existirem.",
+  "baseUrl": "https://sirtecba.gpm.srv.br/",
+
+  "_comentario_url": "NAO CALIBRADO AINDA. Rota da tela Seguranca > Checklists > Exportacoes > Checklists Pergunta/Resposta. Rode `npm run inspect` (HEADED=1 local) pra descobrir o href real no menu e cole aqui. Enquanto for null, o codigo navega clicando no menu por texto.",
+  "checklistsUrl": null,
+
+  "_comentario_destino": "Pasta Checklists_Visita_Previa em G:\\Drives compartilhados\\PCP\\Time CCM - BA\\Controle\\Arquivos. A service account precisa de acesso EDITOR nela (Shared Drive do BA, diferente do CE).",
+  "destFolderId": "1Mw44sdaQTsyuGeuttNPJVOIK_68asTvL",
+  "timezone": "America/Sao_Paulo",
+  "zipPattern": "Checklists PerguntaResposta",
+  "minLinhasDados": 1,
+
+  "_comentario_filtros": "Combinacao fixa da rotina (nunca muda). As 4 datas sao calculadas em runtime, ancoradas em ontem (D-1): inicio = dia 1 do mes de ontem, fim = ontem. Os DOIS pares (Data Servico e Data Inspecao) recebem o MESMO par de datas.",
+  "finalidade": "10 - Vistoria de Obras Elétricas",
+  "tipoChecklist": "UTD - Visita Prévia-BA",
+
+  "_comentario_export": "A tela exporta clicando no botao verde 'Exportar', que baixa um zip 'Checklists PerguntaResposta_<user>_<data>.zip' com 1 CSV dentro. Sem Pesquisar antes: Exportar e a acao direta. Se nao houver dados, os campos resetam e aparece toast laranja 'Nenhum registro encontrado' (mes vazio = skip, nao falha).",
+  "exportButtonText": "Exportar",
+  "toastVazio": "Nenhum registro encontrado",
+
+  "_comentario_selectors": "TODOS null = heuristica em runtime (por label/id/texto). Depois de rodar `npm run inspect`, fixe aqui os ids reais pra deixar o robo deterministico. loginUser/loginPass/loginSubmit seguem o padrao dos outros GPM (#idLogin/#idSenha/botao Entrar) e sao os unicos ja conhecidos.",
+  "selectors": {
+    "loginUser": "#idLogin",
+    "loginPass": "#idSenha",
+    "loginSubmit": "button:has-text('Entrar')",
+    "dataServicoInicio": null,
+    "dataServicoFim": null,
+    "dataInspecaoInicio": null,
+    "dataInspecaoFim": null,
+    "finalidade": null,
+    "tipoChecklist": null,
+    "exportar": null
+  }
+}
