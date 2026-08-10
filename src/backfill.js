@@ -29,7 +29,7 @@ const cfg = require("./../config.json");
 const { login, baixarChecklists, dump } = require("./gpm");
 const { uploadCsv, listarCsv, baixarCsv } = require("./drive");
 const { analisar } = require("./faltantes");
-const { mesclar } = require("./merge");
+const { mesclar, separaHeader, normalizaTexto } = require("./merge");
 const { mesAnoD1, contarLinhasDados } = require("./util");
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -126,6 +126,26 @@ async function alvosDeDIAS(lista) {
           const linhasAntes = antes ? contarLinhasDados(antes) : 0;
           if (linhas < linhasAntes) {
             throw new Error(`export tem MENOS linhas (${linhas}) que o arquivo atual (${linhasAntes}) — nao substituo ${alvo.arquivo}; investigue antes`);
+          }
+
+          // Guarda de COLUNAS. O questionario do checklist mudou ao longo do
+          // tempo e o export de hoje pode trazer MENOS colunas que o arquivo
+          // historico (visto no run 31425684056: 2025.csv tem 81 colunas, o
+          // export de 31/12/2025 hoje veio com 77). Substituir nesse caso
+          // APAGA respostas de perguntas que sairam do formulario — perda de
+          // dado silenciosa. So substituimos se o export tiver as mesmas
+          // colunas ou mais.
+          if (antes) {
+            const hAntes = separaHeader(normalizaTexto(antes)).header;
+            const hNovo = separaHeader(normalizaTexto(r.buffer)).header;
+            const cAntes = hAntes.split(";").length;
+            const cNovo = hNovo.split(";").length;
+            if (cNovo < cAntes) {
+              throw new Error(`export tem MENOS colunas (${cNovo}) que ${alvo.arquivo} (${cAntes}) — substituir apagaria respostas de perguntas que sairam do questionario. NAO substituo.`);
+            }
+            if (hAntes !== hNovo) {
+              console.warn(`[backfill] ${alvo.arquivo}: cabecalho MUDOU (${cAntes} -> ${cNovo} colunas). Substituindo de todo jeito porque nao houve perda de coluna, mas confira quem consome esse arquivo.`);
+            }
           }
           if (dryRun) {
             console.log(`[backfill] DRY_RUN: ${alvo.arquivo} ficaria com ${linhas} linhas (tinha ${linhasAntes}, +${linhas - linhasAntes}).`);
