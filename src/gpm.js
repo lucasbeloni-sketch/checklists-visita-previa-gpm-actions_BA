@@ -448,22 +448,80 @@ async function conferirDatas(root, campos, esperados) {
   console.log(`[gpm] 4 campos de data confirmados: ${lidos.join(" | ")}`);
 }
 
-// Detecta o toast laranja de "sem dados". Vem no HTML do root (e as vezes no
-// shell). Mes vazio e condicao normal — nao e erro.
-async function toastVazio(root, cfg) {
-  const alvo = new RegExp(cfg.toastVazio || "Nenhum registro encontrado", "i");
-  const htmls = [await root.content().catch(() => "")];
+// Detecta o aviso VIVO de "sem dados".
+//
+// CUIDADO (bug que custou 3 runs): a string "Nenhum registro encontrado" JA VEM
+// no DOM desta tela, duas vezes, desde o carregamento:
+//   1. <td colspan="100%">Nenhum registro encontrado</td> — a tabela de anexos,
+//      que a tela sempre renderiza vazia;
+//   2. 'MSG_NO_RECORDS': 'Nenhum registro encontrado' — constante de i18n do JS.
+// Procurar a string no HTML inteiro (o que fazíamos antes) dava positivo NA HORA
+// e vencia a corrida do download, entao TODO periodo parecia vazio — inclusive
+// julho/2026, que tem 331 registros.
+//
+// Agora exigimos: elemento de ALERTA/TOAST, VISIVEL, com a mensagem, e que nao
+// existia na foto tirada antes do clique em Exportar.
+const SELETORES_ALERTA = [
+  ".toast", ".toast-body", ".alert", ".notyf__toast", ".swal2-html-container",
+  "[class*='toast']", "[class*='alert']", "[class*='notif']", "[role='alert']",
+].join(",");
+
+// Tira uma "foto" dos alertas visiveis que contem a mensagem. Devolve os textos
+// (pra comparar antes/depois do clique).
+async function fotoAlertas(root, cfg) {
+  const msg = cfg.toastVazio || "Nenhum registro encontrado";
+  const coleta = async (alvo) => alvo.evaluate((raiz, { sel, msg }) => {
+    const doc = raiz.ownerDocument || raiz;
+    const visivel = (el) => !!(el.offsetParent || el.getClientRects().length);
+    const out = [];
+    for (const el of doc.querySelectorAll(sel)) {
+      // <td> da tabela de anexos nao e alerta; ignora.
+      if (el.tagName === "TD" || el.closest("td")) continue;
+      if (!visivel(el)) continue;
+      const t = (el.textContent || "").replace(/\s+/g, " ").trim();
+      if (t.includes(msg)) out.push(`${el.className || el.tagName}:${t.slice(0, 80)}`);
+    }
+    return out;
+  }, { sel: SELETORES_ALERTA, msg }).catch(() => []);
+
+  const alvos = [root.locator("body").first()];
   const p = paginaDe(root);
-  if (p !== root) htmls.push(await p.content().catch(() => ""));
-  return htmls.some((h) => alvo.test(h));
+  if (p !== root) alvos.push(p.locator("body").first());
+  const tudo = [];
+  for (const a of alvos) tudo.push(...(await coleta(a)));
+  return tudo;
 }
 
-// Clica "Exportar" e captura o download. Corrida entre 3 desfechos:
-//   download (tem dados) | toast "Nenhum registro encontrado" (mes vazio) | timeout.
-// Devolve { arquivo } ou { vazio: true }.
-async function exportar(page, root, cfg) {
+// Ha aviso NOVO de "sem registros" em relacao a `antes`?
+async function toastVazio(root, cfg, antes = []) {
+  const agora = await fotoAlertas(root, cfg);
+  const base = new Set(antes);
+  return agora.some((t) => !base.has(t));
+}
+
+// Sinal corroborante descrito na Skill: quando nao ha dados, o GPM RESETA os 4
+// campos de data. Se eles continuam preenchidos, nao e o caso "vazio".
+async function datasResetadas(root, cfg) {
+  const campos = camposData(cfg);
+  const vals = [];
+  for (const c of campos) {
+    vals.push(await root.locator(c.sel).first().inputValue().catch(() => ""));
+  }
+  return { resetou: vals.every((v) => !v), vals };
+}
+
+// Clica "Exportar" e captura o download. Desfechos:
+//   download        -> tem dados
+//   aviso NOVO de "sem registros" + datas resetadas -> periodo vazio
+//   nada em 45s     -> erro
+//
+// O download tem PRIORIDADE: so aceitamos o veredito "vazio" depois de uma
+// carencia (`graceMs`) e se nenhum download tiver comecado. Antes o veredito
+// vazio era instantaneo e atropelava o download (ver comentario em toastVazio).
+async function exportar(page, root, cfg, { graceMs = 6000 } = {}) {
   const ctx = page.context();
   const texto = cfg.exportButtonText || "Exportar";
+  const logRede = !!process.env.LOG_REDE;
 
   let botao;
   try {
@@ -481,46 +539,99 @@ async function exportar(page, root, cfg) {
     throw new Error(`Botao "${texto}" nao encontrado: ${e.message}`);
   }
 
-  // Arma os listeners ANTES do clique (pode abrir popup).
+  // Foto dos avisos ANTES do clique: a mensagem "Nenhum registro encontrado" ja
+  // existe no DOM desta tela (tabela de anexos + constante de i18n), entao so
+  // conta o que aparecer DEPOIS.
+  const avisosAntes = await fotoAlertas(root, cfg);
+  if (avisosAntes.length) {
+    console.log(`[gpm] aviso(s) de "sem registros" ja presentes antes do clique (ignorados): ${JSON.stringify(avisosAntes)}`);
+  }
+
+  // Rastro de rede (LOG_REDE=1): mostra o que o form manda e o que volta. Ajuda
+  // quando o export nao baixa e nao avisa nada.
+  const offs = [];
+  if (logRede) {
+    const onReq = (req) => {
+      if (req.method() !== "POST") return;
+      const d = (req.postData() || "").slice(0, 900);
+      console.log(`[rede] POST ${req.url()}\n[rede] payload: ${d}`);
+    };
+    const onResp = async (resp) => {
+      if (resp.request().method() !== "POST") return;
+      const ct = resp.headers()["content-type"] || "";
+      console.log(`[rede] <- ${resp.status()} ${ct} ${resp.url()}`);
+      if (/json|text|html/i.test(ct)) {
+        const b = await resp.text().catch(() => "");
+        console.log(`[rede] corpo (500): ${b.slice(0, 500).replace(/\s+/g, " ")}`);
+      }
+    };
+    page.on("request", onReq);
+    page.on("response", onResp);
+    offs.push(() => { page.off("request", onReq); page.off("response", onResp); });
+  }
+
+  // Arma os listeners ANTES do clique (o clique pode abrir popup).
   let onPage;
   const viaPopup = new Promise((resolve) => {
     onPage = (p) => p.waitForEvent("download", { timeout: 45000 }).then(resolve).catch(() => {});
     ctx.on("page", onPage);
   });
   const viaPage = page.waitForEvent("download", { timeout: 47000 });
+  let baixando = false;
+  const marcaDownload = (d) => { baixando = true; return d; };
 
   let download = null;
   try {
     await botao.scrollIntoViewIfNeeded().catch(() => {});
     await botao.click({ force: true }).catch(() => {});
+    const t0 = Date.now();
 
-    // Polling do toast em paralelo ao download: quem chegar primeiro decide.
-    const viaToast = (async () => {
+    // Vigia o aviso, mas so pode "ganhar" depois da carencia e se nenhum
+    // download tiver comecado. Exige tambem que os 4 campos de data tenham
+    // resetado — e o que o GPM faz quando nao ha registros.
+    const viaAviso = (async () => {
       const deadline = Date.now() + 45000;
       while (Date.now() < deadline) {
-        if (await toastVazio(root, cfg)) return "VAZIO";
         await sleep(1000);
+        if (baixando) return null;
+        if (Date.now() - t0 < graceMs) continue;
+        if (!(await toastVazio(root, cfg, avisosAntes))) continue;
+        const { resetou, vals } = await datasResetadas(root, cfg);
+        if (!resetou) {
+          console.log(`[gpm] aviso de "sem registros" apareceu, mas os campos de data continuam preenchidos (${JSON.stringify(vals)}) — nao trato como vazio ainda.`);
+          continue;
+        }
+        return "VAZIO";
       }
       return null;
     })();
 
-    const vencedor = await Promise.race([viaPage, viaPopup, viaToast]);
+    const vencedor = await Promise.race([
+      viaPage.then(marcaDownload),
+      viaPopup.then(marcaDownload),
+      viaAviso,
+    ]);
     if (vencedor === "VAZIO") {
-      console.log('[gpm] toast "Nenhum registro encontrado" — periodo sem dados.');
+      console.log('[gpm] aviso NOVO de "Nenhum registro encontrado" + datas resetadas — periodo sem dados.');
       return { vazio: true };
     }
     download = vencedor;
   } catch (e) {
-    if (await toastVazio(root, cfg)) {
-      console.log('[gpm] toast "Nenhum registro encontrado" (visto apos timeout) — periodo sem dados.');
-      return { vazio: true };
+    // Timeout do download: da uma ultima olhada no aviso antes de errar.
+    if (await toastVazio(root, cfg, avisosAntes)) {
+      const { resetou } = await datasResetadas(root, cfg);
+      if (resetou) {
+        console.log('[gpm] aviso de "sem registros" (visto apos timeout) — periodo sem dados.');
+        return { vazio: true };
+      }
     }
     await dumpFrame(root, "export-sem-download");
     await dump(page, "export-sem-download-shell");
-    throw new Error(`Cliquei Exportar mas nenhum download veio em 45s e nao houve toast de vazio. ${e.message}`);
+    throw new Error(`Cliquei Exportar mas nenhum download veio em 45s e nao houve aviso de vazio. ${e.message}`);
   } finally {
     ctx.off("page", onPage);
     viaPage.catch(() => {}); // evita rejeicao orfa se o race resolveu por outro caminho
+    for (const off of offs) off();
   }
   if (!download) throw new Error("Export sem objeto de download (popup pode ter fechado).");
 
@@ -608,6 +719,6 @@ async function baixarChecklists(page, cfg, mesAno, intervalo) {
 module.exports = {
   login, baixarChecklists, extrairCsv, dump, dumpFrame,
   rootDaTela, abrirChecklists, camposData, fmtISO, setDataFp, lerSelect,
-  selecionarChoices, esperarTiposCarregar, conferirDatas, toastVazio, exportar,
-  norm, primeiroVisivel,
+  selecionarChoices, esperarTiposCarregar, conferirDatas, exportar,
+  toastVazio, fotoAlertas, datasResetadas, norm, primeiroVisivel,
 };

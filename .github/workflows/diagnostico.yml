@@ -45,6 +45,7 @@ jobs:
           GPM_USER: ${{ secrets.GPM_USER }}
           GPM_PASS: ${{ secrets.GPM_PASS }}
           PERIODO: ${{ inputs.periodo }}
+          LOG_REDE: "1"   # loga payload/resposta do POST do export
 
       - name: Upload log + debug
         if: always()

@@ -307,3 +307,88 @@ test("tipo: recusa quando o alvo nao existe na lista (nao aceita parecido)", { s
     );
   } finally { await browser.close(); }
 });
+
+// ---- deteccao de "sem registros" (bug dos runs 31422888135/31423258993/31423616921) ----
+
+// Fixture que imita o DOM REAL: a mensagem ja vem na pagina duas vezes, numa
+// tabela de anexos vazia e numa constante de i18n do JS. Nenhuma das duas e
+// toast — mas o detector antigo (regex no HTML inteiro) casava com elas.
+const HTML_COM_STRING_ESTATICA = `
+<html><body>
+  <table><thead><tr><th>Descrição</th><th>Data</th></tr></thead>
+    <tbody><tr><td class="text-center" colspan="100%">Nenhum registro encontrado</td></tr></tbody>
+  </table>
+  <script>window.MSG = { 'MSG_NO_RECORDS': 'Nenhum registro encontrado' };</script>
+  <div id="datas"></div>
+  <div id="toasts"></div>
+</body></html>`;
+
+async function abrirEstatica() {
+  const browser = await chromium.launch({ headless: true });
+  const page = await browser.newPage({ viewport: { width: 1568, height: 698 } });
+  await page.setContent(HTML_COM_STRING_ESTATICA);
+  // os 4 hidden que datasResetadas() le
+  await page.evaluate(() => {
+    for (const id of ["data_inicial", "data_final", "data_insp_in", "data_insp_out"]) {
+      const el = document.createElement("input");
+      el.type = "hidden"; el.id = id; el.value = "2026-07-01 00:00";
+      document.getElementById("datas").appendChild(el);
+    }
+  });
+  return { browser, page };
+}
+
+test("toastVazio IGNORA a mensagem estatica do DOM (td de anexos + constante de i18n)", { skip: !temChromium }, async () => {
+  const { fotoAlertas, toastVazio } = require("../src/gpm");
+  const { browser, page } = await abrirEstatica();
+  try {
+    const antes = await fotoAlertas(page, CFG);
+    assert.deepStrictEqual(antes, [], "nem o <td> nem o <script> podem contar como alerta");
+    assert.strictEqual(await toastVazio(page, CFG, antes), false);
+  } finally { await browser.close(); }
+});
+
+test("toastVazio dispara em toast VISIVEL que apareceu depois da foto", { skip: !temChromium }, async () => {
+  const { fotoAlertas, toastVazio } = require("../src/gpm");
+  const { browser, page } = await abrirEstatica();
+  try {
+    const antes = await fotoAlertas(page, CFG);
+    await page.evaluate(() => {
+      const t = document.createElement("div");
+      t.className = "toast alert alert-warning";
+      t.textContent = "Nenhum registro encontrado";
+      document.getElementById("toasts").appendChild(t);
+    });
+    assert.strictEqual(await toastVazio(page, CFG, antes), true);
+  } finally { await browser.close(); }
+});
+
+test("toastVazio nao dispara com toast escondido", { skip: !temChromium }, async () => {
+  const { fotoAlertas, toastVazio } = require("../src/gpm");
+  const { browser, page } = await abrirEstatica();
+  try {
+    const antes = await fotoAlertas(page, CFG);
+    await page.evaluate(() => {
+      const t = document.createElement("div");
+      t.className = "toast";
+      t.style.display = "none";
+      t.textContent = "Nenhum registro encontrado";
+      document.getElementById("toasts").appendChild(t);
+    });
+    assert.strictEqual(await toastVazio(page, CFG, antes), false);
+  } finally { await browser.close(); }
+});
+
+test("datasResetadas distingue campos preenchidos de campos zerados", { skip: !temChromium }, async () => {
+  const { datasResetadas } = require("../src/gpm");
+  const { browser, page } = await abrirEstatica();
+  try {
+    assert.strictEqual((await datasResetadas(page, CFG)).resetou, false);
+    await page.evaluate(() => {
+      for (const id of ["data_inicial", "data_final", "data_insp_in", "data_insp_out"]) {
+        document.getElementById(id).value = "";
+      }
+    });
+    assert.strictEqual((await datasResetadas(page, CFG)).resetou, true);
+  } finally { await browser.close(); }
+});
