@@ -50,11 +50,31 @@ async function limpar(root, campo) {
 
 // COMBINACOES testadas. `servico`/`inspecao`: "range" | "vazio" | "range00"
 // (range00 = fim as 00:00, que e o que a Skill fazia sem querer).
+// Rodada 1 (feita no run 31423616921) provou que NENHUMA combinacao de data
+// devolve dados — inclusive a que a Skill usava. Entao o problema nao e o
+// filtro de data. Estes controles isolam o que sobrou: periodo com volume
+// conhecido, outros tipos de checklist, e sem filtro de tipo.
+//   `tipo`: texto exato do Tipo de Checklist, ou null pra nao mexer no campo.
+//   `periodo`: [inicioBR, fimBR] proprio, ou null pra usar o do PERIODO/env.
 const COMBOS = [
-  { nome: "A: servico=range(23:59) + inspecao=range(23:59)  [robo hoje]", servico: "range", inspecao: "range" },
-  { nome: "B: servico=range(23:59) + inspecao=VAZIO", servico: "range", inspecao: "vazio" },
-  { nome: "C: servico=VAZIO        + inspecao=range(23:59)", servico: "vazio", inspecao: "range" },
-  { nome: "D: servico=range(00:00) + inspecao=range(00:00)  [o que a Skill fazia]", servico: "range00", inspecao: "range00" },
+  {
+    nome: "E: julho/2026 inteiro + UTD (a Skill tirou 331 linhas desse periodo)",
+    servico: "range", inspecao: "range", periodo: ["01/07/2026", "31/07/2026"],
+  },
+  {
+    nome: "F: julho/2026 inteiro, SEM filtro de tipo (deixa o campo como veio)",
+    servico: "range", inspecao: "range", periodo: ["01/07/2026", "31/07/2026"], tipo: null, semTipo: true,
+  },
+  {
+    nome: "G: julho/2026 inteiro + LPT - Visita Prévia-BA (outro tipo)",
+    servico: "range", inspecao: "range", periodo: ["01/07/2026", "31/07/2026"],
+    tipo: "LPT - Visita Prévia-BA", tokenTipo: "LPT - Visita",
+  },
+  {
+    nome: "H: julho/2026 inteiro + Visita Prévia (Concluídas)",
+    servico: "range", inspecao: "range", periodo: ["01/07/2026", "31/07/2026"],
+    tipo: "Visita Prévia (Concluídas)", tokenTipo: "Concluí",
+  },
 ];
 
 (async () => {
@@ -67,7 +87,7 @@ const COMBOS = [
   } else {
     ({ inicio, fim } = intervaloD1(cfg.timezone));
   }
-  const mesAno = `${p2(fim.mes)}.${fim.ano}`;
+  let mesAno = `${p2(fim.mes)}.${fim.ano}`;
   console.log(`[diag] periodo: ${p2(inicio.dia)}/${p2(inicio.mes)}/${inicio.ano} a ${p2(fim.dia)}/${p2(fim.mes)}/${fim.ano}\n`);
 
   const browser = await chromium.launch({ headless });
@@ -79,6 +99,20 @@ const COMBOS = [
   try {
     await login(page, cfg);
 
+    // QUEM esta logado? A Skill rodava na sessao do proprio usuario (o zip dela
+    // se chamava "Checklists PerguntaResposta_SIR795027_..."). Se o secret for
+    // outra conta, com visibilidade menor de contrato/unidade, o export volta
+    // vazio com os mesmos filtros — por isso conferimos a identidade aqui.
+    const quem = await page.evaluate(() => {
+      const html = document.documentElement.innerHTML;
+      const codigos = [...new Set((html.match(/SIR\d{5,}/g) || []))];
+      const texto = (document.body.innerText || "").replace(/\s+/g, " ");
+      return { codigos, header: texto.slice(0, 300) };
+    }).catch(() => ({ codigos: [], header: "" }));
+    console.log(`[diag] codigos de usuario vistos no shell: ${JSON.stringify(quem.codigos)}`);
+    console.log(`[diag] header: ${quem.header}
+`);
+
     for (const combo of COMBOS) {
       console.log(`\n########## ${combo.nome} ##########`);
       try {
@@ -86,6 +120,8 @@ const COMBOS = [
         // campos depois de um export sem resultado).
         const root = await abrirChecklists(page, cfg);
         const campos = camposData(cfg);
+        const ini = combo.periodo ? partesDeBR(combo.periodo[0]) : inicio;
+        const fimC = combo.periodo ? partesDeBR(combo.periodo[1]) : fim;
 
         // campos[0..1] = Data Servico ini/fim | campos[2..3] = Data Inspecao ini/fim
         const pares = [
@@ -100,15 +136,21 @@ const COMBOS = [
             continue;
           }
           const horaFim = par.modo === "range00" ? "00:00" : (cfg.horaFim || "23:59");
-          await setDataFp(root, par.ini, inicio, cfg.horaInicio || "00:00");
-          await setDataFp(root, par.fim, fim, horaFim);
-          esperados[par.ini.sel] = fmtISO(inicio, cfg.horaInicio || "00:00");
-          esperados[par.fim.sel] = fmtISO(fim, horaFim);
+          await setDataFp(root, par.ini, ini, cfg.horaInicio || "00:00");
+          await setDataFp(root, par.fim, fimC, horaFim);
+          esperados[par.ini.sel] = fmtISO(ini, cfg.horaInicio || "00:00");
+          esperados[par.fim.sel] = fmtISO(fimC, horaFim);
         }
 
         await selecionarChoices(root, cfg, "finalidade", cfg.finalidade, cfg.finalidadeSearch);
         await esperarTiposCarregar(root, cfg);
-        await selecionarChoices(root, cfg, "tipoChecklist", cfg.tipoChecklist, cfg.tipoChecklistSearch);
+        if (combo.semTipo) {
+          console.log("   [tipo] nao mexido de proposito (controle sem filtro de tipo)");
+        } else {
+          const alvoTipo = combo.tipo || cfg.tipoChecklist;
+          const tokenTipo = combo.tokenTipo || cfg.tipoChecklistSearch;
+          await selecionarChoices(root, cfg, "tipoChecklist", alvoTipo, tokenTipo);
+        }
 
         // Estado real dos 4 campos + do radio "conforme" na hora do export.
         const estado = await root.evaluate(() => {
@@ -131,7 +173,7 @@ const COMBOS = [
         }
         const { buffer, bytes } = extrairCsv(r.arquivo);
         const linhas = contarLinhasDados(buffer);
-        const iv = validarIntervalo(buffer, mesAno);
+        const iv = validarIntervalo(buffer, `${p2(fimC.mes)}.${fimC.ano}`);
         console.log(`   >>> RESULTADO: ${linhas} linhas, ${bytes} bytes | Data Execucao ${iv.min} a ${iv.max}`);
         resultados.push({ combo: combo.nome, linhas, obs: `exec ${iv.min}..${iv.max}`, estado });
       } catch (e) {
