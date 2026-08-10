@@ -91,4 +91,42 @@ async function uploadCsv(buffer, nomeFinal, cfg) {
   return { acao: "created", id: created.data.id, duplicatas: [] };
 }
 
-module.exports = { uploadCsv };
+// Lista os .csv da pasta-destino: [{ id, name, size, modifiedTime }].
+async function listarCsv(cfg) {
+  const drive = await getDrive();
+  const folder = await withRetry(
+    () => drive.files.get({ fileId: cfg.destFolderId, fields: "id,name,driveId", supportsAllDrives: true }),
+    { label: "get folder" }
+  );
+  const driveId = folder.data.driveId;
+  const list = await withRetry(
+    () => drive.files.list({
+      q: `'${cfg.destFolderId}' in parents and trashed = false and mimeType != 'application/vnd.google-apps.folder'`,
+      fields: "files(id,name,size,modifiedTime)",
+      orderBy: "name",
+      pageSize: 500,
+      supportsAllDrives: true,
+      includeItemsFromAllDrives: true,
+      corpora: driveId ? "drive" : undefined,
+      driveId: driveId || undefined,
+    }),
+    { label: "list csv" }
+  );
+  return (list.data.files || []).filter((f) => /\.csv$/i.test(f.name));
+}
+
+// Baixa um arquivo da pasta-destino pelo nome. Devolve Buffer, ou null se nao
+// existir. Usado pelo backfill (le o arquivo atual, mescla, regrava).
+async function baixarCsv(nome, cfg) {
+  const drive = await getDrive();
+  const arquivos = await listarCsv(cfg);
+  const alvo = arquivos.find((f) => f.name === nome);
+  if (!alvo) return null;
+  const r = await withRetry(
+    () => drive.files.get({ fileId: alvo.id, alt: "media", supportsAllDrives: true }, { responseType: "arraybuffer" }),
+    { label: "download" }
+  );
+  return Buffer.from(r.data);
+}
+
+module.exports = { uploadCsv, listarCsv, baixarCsv };

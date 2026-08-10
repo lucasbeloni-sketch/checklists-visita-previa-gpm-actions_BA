@@ -121,9 +121,46 @@ GPM_BA_USER=... GPM_BA_PASS=... DRY_RUN=1 npm start
 Em qualquer falha, screenshot + HTML da tela sobem como artefato `debug` do run
 e uma issue rolante é aberta/comentada.
 
-## Fora de escopo nesta versão
+## Backfill dos dias perdidos
 
-Backfill de meses antigos (a Skill original tem esse modo manual). A função
-`baixarChecklists(page, cfg, mesAno, intervalo)` já aceita um intervalo
-explícito, então dá pra plugar depois um loop mês a mês respeitando o limite de
-31 dias do GPM.
+A Skill manual exportava com a Data Fim caindo às `00:00`, então **o último dia
+de cada intervalo ficava fora**. Nos meses em andamento isso se corrigia no dia
+seguinte; nos meses **fechados** a última escrita foi a do dia 1º do mês
+seguinte, e aquele último dia ficou zerado para sempre.
+
+Detectado na base: **31 dias faltando** (2023: 8, 2024: 9, 2025: 9, 2026: 5).
+
+```bash
+# Só lê o Drive, não toca no GPM — revise o escopo antes de exportar nada:
+GOOGLE_CREDENTIALS="$(cat credentials.json)" npm run faltantes
+
+DRY_RUN=1 npm run backfill              # exporta e mostra o que mudaria, sem gravar
+npm run backfill                        # grava
+DIAS="31/07/2026" npm run backfill      # só um dia (valide com um antes dos 31)
+```
+
+Duas estratégias, escolhidas pelo nome do arquivo de destino:
+
+| Destino | Estratégia | Por quê |
+|---|---|---|
+| `mm.aaaa.csv` (2026) | reexporta o **mês inteiro** e substitui | mesmo nº de exports que pegar 1 dia, e sem risco de merge: o arquivo sai todo de um export só |
+| `aaaa.csv` (2023–2025) | exporta **só o dia** e mescla | reexportar o ano custaria 12 exports/ano e reescreveria o arquivo com o questionário **atual** — o schema mudou (2023: 69 colunas, 2025: 81, 2026: 78) e isso quebraria quem lê esses arquivos |
+
+Guardas do merge (`src/merge.js`):
+
+- **Cabeçalho tem que ser idêntico.** Se o export de hoje vier com colunas
+  diferentes do arquivo de destino, aborta aquele dia e registra no manifesto —
+  nunca desalinha colunas.
+- **Append textual**: as linhas do destino não são reserializadas, então campos
+  com quebra de linha dentro de aspas saem byte a byte iguais.
+- **Dedup por `cod_checklist`**: o export de um dia pode trazer linhas cuja
+  `Data Execução` é de outro dia (o filtro é por Data Serviço / Data Inspeção),
+  e essas podem já estar no destino.
+- **Não mexe se o dia já existe** no destino.
+- Na estratégia de mês inteiro, recusa substituir se o export vier com **menos**
+  linhas que o arquivo atual.
+
+Cada dia é um export no GPM; o script vai um a um e no fim imprime um manifesto
+`dia;arquivo;status;linhas`. Dos 31 dias, 8 caem em sábado/domingo e podem estar
+legitimamente vazios — nesse caso o GPM responde "nenhum registro encontrado" e
+o dia sai como `vazio` no manifesto, sem erro.
