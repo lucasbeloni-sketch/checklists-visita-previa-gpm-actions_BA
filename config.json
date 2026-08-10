@@ -2,8 +2,8 @@
   "_comentario_unidade": "ATENCAO: esta e a unidade BA (sirtecba), diferente das Skills/repos irmaos de CE (sirtecce). Credenciais podem ser outras: o codigo usa GPM_BA_USER/GPM_BA_PASS e cai pra GPM_USER/GPM_PASS se as BA nao existirem.",
   "baseUrl": "https://sirtecba.gpm.srv.br/",
 
-  "_comentario_url": "NAO CALIBRADO AINDA. Rota da tela Seguranca > Checklists > Exportacoes > Checklists Pergunta/Resposta. Rode `npm run inspect` (HEADED=1 local) pra descobrir o href real no menu e cole aqui. Enquanto for null, o codigo navega clicando no menu por texto.",
-  "checklistsUrl": null,
+  "_comentario_url": "CALIBRADO no menu real (2026-08-10, via npm run inspect): Seguranca > Checklists > Exportacoes > Checklists Pergunta/Resposta = codigo de tela GR669, aberto pelo shell via abrirTela(). goto direto pode vir SEM o shell/iframe; o codigo trata os dois casos. NAO confundir com /ci/Seguranca/ExportacaoChecklist (GR674) nem ExportacaoChecklistNIS (GR688), que sao outras telas.",
+  "checklistsUrl": "https://sirtecba.gpm.srv.br/ci/Seguranca/ChecklistPerguntaResposta",
 
   "_comentario_destino": "Pasta Checklists_Visita_Previa em G:\\Drives compartilhados\\PCP\\Time CCM - BA\\Controle\\Arquivos. A service account precisa de acesso EDITOR nela (Shared Drive do BA, diferente do CE).",
   "destFolderId": "1Mw44sdaQTsyuGeuttNPJVOIK_68asTvL",
@@ -15,21 +15,29 @@
   "finalidade": "10 - Vistoria de Obras Elétricas",
   "tipoChecklist": "UTD - Visita Prévia-BA",
 
+  "_comentario_busca": "Os dropdowns sao Choices.js com filtro fuzzy: digitar a string inteira NAO acha (o filtro descarta). Digitamos so este token curto e confirmamos pelo <select> nativo. Ajuste se o GPM renomear as opcoes.",
+  "finalidadeSearch": "Vistoria de Obras",
+  "tipoChecklistSearch": "Visita Pr",
+
+  "_comentario_horas": "CALIBRADO no DOM (2026-08-10): os 4 campos sao flatpickr com enableTime e altInput. O form submete os inputs HIDDEN (#data_inicial etc) em Y-m-d H:i; o input visivel e o altInput em d/m/Y H:i. Os data-options do proprio GPM usam defaultHour 00:00 nos campos de inicio (classe dta-zero) e 23:59 nos de fim (classe dta-fim) — o robo seta esses horarios EXPLICITAMENTE, senao um fim as 00:00 cortaria o ultimo dia inteiro do intervalo.",
+  "horaInicio": "00:00",
+  "horaFim": "23:59",
+
   "_comentario_export": "A tela exporta clicando no botao verde 'Exportar', que baixa um zip 'Checklists PerguntaResposta_<user>_<data>.zip' com 1 CSV dentro. Sem Pesquisar antes: Exportar e a acao direta. Se nao houver dados, os campos resetam e aparece toast laranja 'Nenhum registro encontrado' (mes vazio = skip, nao falha).",
   "exportButtonText": "Exportar",
   "toastVazio": "Nenhum registro encontrado",
 
-  "_comentario_selectors": "TODOS null = heuristica em runtime (por label/id/texto). Depois de rodar `npm run inspect`, fixe aqui os ids reais pra deixar o robo deterministico. loginUser/loginPass/loginSubmit seguem o padrao dos outros GPM (#idLogin/#idSenha/botao Entrar) e sao os unicos ja conhecidos.",
+  "_comentario_selectors": "CALIBRADO no DOM real (2026-08-10, npm run inspect). A tela vem DENTRO do iframe #frameTelasGPM. Os 4 seletores de data apontam para os inputs HIDDEN originais do flatpickr (que tem id e sao os que o form submete) — nao para os altInputs visiveis, que nao tem id e repetem o mesmo placeholder. Finalidade/Tipo sao <select> escondidos atras de widgets Choices.js. O botao Exportar nao tem id: casamos btn-success + texto.",
   "selectors": {
     "loginUser": "#idLogin",
     "loginPass": "#idSenha",
     "loginSubmit": "button:has-text('Entrar')",
-    "dataServicoInicio": null,
-    "dataServicoFim": null,
-    "dataInspecaoInicio": null,
-    "dataInspecaoFim": null,
-    "finalidade": null,
-    "tipoChecklist": null,
-    "exportar": null
+    "dataServicoInicio": "#data_inicial",
+    "dataServicoFim": "#data_final",
+    "dataInspecaoInicio": "#data_insp_in",
+    "dataInspecaoFim": "#data_insp_out",
+    "finalidade": "#finalidade",
+    "tipoChecklist": "#tipos",
+    "exportar": "button.btn-success:has-text('Exportar')"
   }
 }

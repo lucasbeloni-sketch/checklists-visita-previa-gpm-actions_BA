@@ -236,195 +236,196 @@ async function abrirChecklists(page, cfg) {
   return root;
 }
 
-// Mapeia os 4 campos de data, em ordem visual (esquerda -> direita):
-//   [0] Data Servico Inicio, [1] Data Servico Fim,
-//   [2] Data Inspecao Inicio, [3] Data Inspecao Fim
-// Heuristica: pega os inputs que parecem campo de data (id/name/class/placeholder
-// com "data"/"dd/mm", ou type=date/text mascarado) em ordem de documento e
-// devolve um seletor estavel pra cada um (#id > [name=..] > nth de indice).
-// Overrides de config.json vencem a heuristica quando presentes.
-async function mapearCamposData(root, cfg) {
-  const s = cfg.selectors;
-  const overrides = [s.dataServicoInicio, s.dataServicoFim, s.dataInspecaoInicio, s.dataInspecaoFim];
-  if (overrides.every(Boolean)) return overrides;
-
-  const achados = await root.evaluate(() => {
-    const ehData = (el) => {
-      const bag = `${el.id} ${el.name} ${el.className} ${el.placeholder || ""}`.toLowerCase();
-      if (el.type === "date") return true;
-      if (el.type && !["text", "tel", ""].includes(el.type)) return false;
-      return /data|dt_|dd\/mm|\bdate\b/.test(bag);
-    };
-    const out = [];
-    for (const el of document.querySelectorAll("input")) {
-      if (!ehData(el)) continue;
-      const visivel = !!(el.offsetParent || el.getClientRects().length);
-      if (!visivel) continue;
-      out.push({
-        sel: el.id ? `#${CSS.escape(el.id)}` : (el.name ? `input[name="${el.name}"]` : null),
-        id: el.id, name: el.name, placeholder: el.placeholder || "",
-        x: Math.round(el.getBoundingClientRect().left),
-        y: Math.round(el.getBoundingClientRect().top),
-      });
-    }
-    return out;
-  });
-
-  if (achados.length < 4) {
-    await dumpFrame(root, "campos-data-insuficientes");
-    throw new Error(`Esperava 4 campos de data na tela, achei ${achados.length}: ${JSON.stringify(achados)}. Fixe os 4 seletores em config.json > selectors.`);
-  }
-  // Ordem visual: linha (y) e depois coluna (x) — os 4 ficam na mesma faixa.
-  achados.sort((a, b) => (Math.abs(a.y - b.y) > 20 ? a.y - b.y : a.x - b.x));
-  const quatro = achados.slice(0, 4).map((a, i) => {
-    if (a.sel) return a.sel;
-    // Sem id nem name nao ha seletor estavel — melhor falhar claro.
-    throw new Error(`Campo de data #${i + 1} nao tem id nem name (${JSON.stringify(a)}). Fixe os 4 seletores em config.json > selectors.`);
-  });
-  console.log(`[gpm] campos de data mapeados: ${quatro.join(" | ")}`);
-  return overrides.map((o, i) => o || quatro[i]);
+// Os 4 campos de data. CALIBRADO: sao flatpickr com altInput -> existem DOIS
+// inputs por campo: o ORIGINAL (hidden, com id, formato Y-m-d H:i, e o que o
+// form submete) e o altInput (visivel, sem id, formato d/m/Y H:i). Operamos
+// sempre no original pelo id, via API do flatpickr.
+//   #data_inicial  = Data Servico Inicio   (dta-zero, defaultHour 00:00)
+//   #data_final    = Data Servico Final    (dta-fim,  defaultHour 23:59)
+//   #data_insp_in  = Data Inspecao Inicio  (dta-zero)
+//   #data_insp_out = Data Inspecao Final   (dta-fim)
+function camposData(cfg) {
+  const s = cfg.selectors || {};
+  return [
+    { sel: s.dataServicoInicio || "#data_inicial", label: "Data Servico Inicio", fim: false },
+    { sel: s.dataServicoFim || "#data_final", label: "Data Servico Final", fim: true },
+    { sel: s.dataInspecaoInicio || "#data_insp_in", label: "Data Inspecao Inicio", fim: false },
+    { sel: s.dataInspecaoFim || "#data_insp_out", label: "Data Inspecao Final", fim: true },
+  ];
 }
 
-// Preenche UM campo de data e CONFIRMA relendo o value. Faz N tentativas:
-// fill -> se nao bateu, seta value via JS + dispara eventos da mascara -> relê.
-// Essa reconferencia e o que mata o bug historico do "Data Inspecao Fim".
-async function setData(root, sel, valor, label, tentativas = 3) {
-  const campo = root.locator(sel).first();
-  try {
-    await campo.waitFor({ state: "visible", timeout: 20000 });
-  } catch (e) {
-    await dump(paginaDe(root), `data-${label}-ausente`);
-    throw new Error(`${label}: campo ${sel} nao apareceu (${e.message})`);
-  }
-  await campo.scrollIntoViewIfNeeded().catch(() => {});
+// "aaaa-mm-dd HH:MM" — formato que o input hidden (dateFormat Y-m-d H:i) guarda
+// e que o form submete. E por este valor que conferimos, nao pelo texto visivel.
+function fmtISO({ ano, mes, dia }, hora) {
+  const p = (n) => String(n).padStart(2, "0");
+  return `${ano}-${p(mes)}-${p(dia)} ${hora}`;
+}
+
+// Preenche UM campo de data pela API do flatpickr e CONFIRMA relendo o value do
+// input hidden. A hora e explicita (00:00 nos campos de inicio, 23:59 nos de
+// fim, iguais aos defaultHour do proprio GPM): como enableTime esta ligado, um
+// fim as 00:00 cortaria o ultimo dia inteiro do intervalo.
+// Fallback: digita no altInput visivel (allowInput=true) e relê o hidden.
+// `timeoutFp` = quanto esperar a instancia do flatpickr aparecer (os testes
+// passam um valor curto; no CI vale o default folgado).
+async function setDataFp(root, campo, parte, hora, tentativas = 3, timeoutFp = 25000) {
+  const { sel, label } = campo;
+  const esperado = fmtISO(parte, hora);
+  const [hh, mm] = hora.split(":").map(Number);
+
+  // O flatpickr pode demorar a instanciar (no CI mais que a tela aparecer).
+  await root.waitForFunction(
+    (s) => { const el = document.querySelector(s); return !!(el && el._flatpickr); },
+    sel, { timeout: timeoutFp }
+  ).catch(() => { /* segue: o evaluate abaixo diagnostica */ });
 
   let lido = "";
   for (let i = 1; i <= tentativas; i++) {
-    await campo.click().catch(() => {});
-    await paginaDe(root).keyboard.press("Escape").catch(() => {}); // fecha datepicker preso
-    await campo.fill("").catch(() => {});
-    await campo.fill(valor).catch(() => {});
-    lido = await campo.inputValue().catch(() => "");
+    const r = await root.evaluate(({ sel, ano, mes, dia, hh, mm }) => {
+      const el = document.querySelector(sel);
+      if (!el) return { ok: false, motivo: "input nao existe" };
+      if (!el._flatpickr) return { ok: false, motivo: "sem instancia flatpickr", cls: (el.className || "").slice(0, 80) };
+      el._flatpickr.setDate(new Date(ano, mes - 1, dia, hh, mm), true);
+      return { ok: true, hidden: el.value, visivel: el._flatpickr.altInput ? el._flatpickr.altInput.value : null };
+    }, { sel, ano: parte.ano, mes: parte.mes, dia: parte.dia, hh, mm });
 
-    if (lido !== valor) {
-      lido = await campo.evaluate((el, v) => {
-        el.value = v;
-        for (const t of ["input", "keyup", "change", "blur"]) {
-          el.dispatchEvent(new Event(t, { bubbles: true }));
-        }
-        return el.value;
-      }, valor).catch(() => lido);
-    }
-    await campo.press("Tab").catch(() => {});
-    await sleep(300);
-    lido = await campo.inputValue().catch(() => lido);
-    if (lido === valor) {
-      console.log(`[gpm] ${label} = ${valor} (${sel})`);
+    if (r.ok && r.hidden === esperado) {
+      console.log(`[gpm] ${label} = ${esperado} (visivel: "${r.visivel}")`);
       return;
     }
-    console.warn(`[gpm] ${label}: tentativa ${i}/${tentativas} — campo ficou "${lido}", esperava "${valor}". Repetindo...`);
-  }
+    lido = r.ok ? r.hidden : `<${r.motivo}${r.cls ? ` cls="${r.cls}"` : ""}>`;
 
-  await dump(paginaDe(root), `data-${label}-falha`);
-  throw new Error(`${label}: esperava "${valor}" mas o campo ${sel} ficou "${lido}" apos ${tentativas} tentativas.`);
-}
-
-// Acha um <select> pelo nome logico do campo ("finalidade" | "tipoChecklist").
-// Heuristica: id/name casando com o padrao, ou <label>/texto vizinho casando.
-async function acharSelect(root, cfg, campo) {
-  const override = cfg.selectors[campo];
-  if (override) return override;
-
-  const padrao = campo === "finalidade" ? "finalidad" : "tipo";
-  const rotulo = campo === "finalidade" ? "finalidade" : "tipo de checklist";
-
-  const sel = await root.evaluate(({ padrao, rotulo }) => {
-    const norm = (s) => String(s ?? "").normalize("NFD").replace(/[̀-ͯ]/g, "")
-      .toLowerCase().replace(/\s+/g, " ").trim();
-    const selects = [...document.querySelectorAll("select")];
-    const idDe = (el) => (el.id ? `#${CSS.escape(el.id)}` : (el.name ? `select[name="${el.name}"]` : null));
-
-    // 1) id/name.
-    for (const el of selects) {
-      if (norm(`${el.id} ${el.name}`).includes(padrao)) {
-        const s = idDe(el);
-        if (s) return s;
+    // Fallback: digitar no altInput visivel (d/m/Y H:i) e deixar o flatpickr
+    // parsear. So tem sentido se a instancia existir.
+    if (r.ok) {
+      const alt = root.locator(`${sel} + input, ${sel} ~ input.flatpickr-input`).first();
+      if (await alt.isVisible().catch(() => false)) {
+        const p = (n) => String(n).padStart(2, "0");
+        await alt.fill(`${p(parte.dia)}/${p(parte.mes)}/${parte.ano} ${hora}`).catch(() => {});
+        await alt.press("Escape").catch(() => {});
+        await sleep(400);
+        lido = await root.locator(sel).first().inputValue().catch(() => lido);
+        if (lido === esperado) {
+          console.log(`[gpm] ${label} = ${esperado} (via altInput).`);
+          return;
+        }
       }
     }
-    // 2) <label for=...> ou texto do container.
-    for (const el of selects) {
-      const lab = el.id ? document.querySelector(`label[for="${el.id}"]`) : null;
-      const textos = [lab?.textContent, el.closest(".form-group, .col, div")?.textContent];
-      if (textos.some((t) => norm(t).includes(rotulo))) {
-        const s = idDe(el);
-        if (s) return s;
-      }
-    }
-    return null;
-  }, { padrao, rotulo });
-
-  if (!sel) {
-    await dumpFrame(root, `select-${campo}-nao-achado`);
-    throw new Error(`Dropdown "${campo}" nao encontrado. Rode 'npm run inspect' e fixe selectors.${campo} no config.json.`);
+    console.warn(`[gpm] ${label}: tentativa ${i}/${tentativas} — hidden ficou "${lido}", esperava "${esperado}". Repetindo...`);
+    await sleep(400);
   }
-  return sel;
+
+  await dump(paginaDe(root), `data-${label.replace(/\s+/g, "-")}-falha`);
+  throw new Error(`${label}: esperava "${esperado}" em ${sel} mas ficou "${lido}" apos ${tentativas} tentativas.`);
 }
 
-// Seleciona a opcao cujo texto casa (comparacao sem acento/caixa) com `alvo`.
-// O <select> nativo pode estar escondido atras de um widget (Choices/Chosen);
-// como o SUBMIT usa o select nativo, marcamos a option via JS e disparamos
-// change — mesmo caminho validado nos repos irmaos de CE.
-async function selecionarOpcao(root, cfg, campo, alvo) {
-  const sel = await acharSelect(root, cfg, campo);
-  await root.locator(sel).first().waitFor({ state: "attached", timeout: 20000 });
-
-  const r = await root.evaluate(({ sel, alvo }) => {
-    const norm = (s) => String(s ?? "").normalize("NFD").replace(/[̀-ͯ]/g, "")
-      .toLowerCase().replace(/\s+/g, " ").trim();
-    const el = document.querySelector(sel);
-    if (!el) return { ok: false, motivo: "select desapareceu", opcoes: [] };
-    const alvoN = norm(alvo);
-    const opcoes = [...el.options].map((o) => o.text.trim());
-
-    let escolhida = [...el.options].find((o) => norm(o.text) === alvoN)
-      || [...el.options].find((o) => norm(o.text).includes(alvoN))
-      || [...el.options].find((o) => alvoN.includes(norm(o.text)) && norm(o.text).length > 3);
-    if (!escolhida) return { ok: false, motivo: "opcao nao existe no dropdown", opcoes };
-
-    if (el.multiple) for (const o of el.options) o.selected = false;
-    el.value = escolhida.value;
-    escolhida.selected = true;
-    for (const t of ["input", "change"]) el.dispatchEvent(new Event(t, { bubbles: true }));
-    return { ok: true, texto: escolhida.text.trim(), value: escolhida.value, opcoes };
-  }, { sel, alvo });
-
-  if (!r.ok) {
-    await dumpFrame(root, `select-${campo}-falha`);
-    throw new Error(`${campo}: ${r.motivo} (queria "${alvo}"). Opcoes disponiveis: ${JSON.stringify(r.opcoes)}`);
-  }
-  await sleep(500);
-
-  // Reconfirma pelo select nativo (o widget visual pode mentir).
-  const confirmado = await root.evaluate((sel) => {
-    const el = document.querySelector(sel);
-    return el ? [...el.selectedOptions].map((o) => o.text.trim()).join(" | ") : "";
+// Le {value,text} do <select> nativo — e o que o submit usa, mesmo escondido
+// atras do widget Choices.js.
+async function lerSelect(root, sel) {
+  return root.evaluate((s) => {
+    const el = document.querySelector(s);
+    if (!el) return { value: "", text: "" };
+    const o = el.options[el.selectedIndex];
+    return { value: el.value || "", text: o ? o.text.trim() : "" };
   }, sel);
-  console.log(`[gpm] ${campo} = "${confirmado}" (${sel})`);
-  return confirmado;
 }
 
-// Relê os 4 campos de data de uma vez e confere contra o esperado. Ultimo
-// portao antes de Exportar: se algum campo "voltou" pro valor antigo (o bug
-// historico), abortamos em vez de exportar o periodo errado.
-async function conferirDatas(root, seletores, esperados) {
+// Seleciona uma opcao num dropdown Choices.js (Finalidade #finalidade / Tipo de
+// Checklist #tipos). Fluxo validado no repo irmao de CE (contrato):
+//   abre clicando em .choices__inner (o wrapper externo nao abre)
+//   -> digita um TOKEN CURTO no input de busca (a string inteira e descartada
+//      pelo filtro fuzzy) -> Enter -> confere pelo <select> nativo
+//   -> fallback: clica no item da listbox pelo texto.
+// `tms` permite encurtar as esperas nos testes: { widget } = montagem do widget,
+// { item } = clique no item da listbox no fallback.
+async function selecionarChoices(root, cfg, campo, alvo, token, tms = {}) {
+  const tWidget = tms.widget ?? 20000;
+  const tItem = tms.item ?? 8000;
+  const sel = cfg.selectors[campo] || (campo === "finalidade" ? "#finalidade" : "#tipos");
+  const wrap = root.locator(`div.choices:has(${sel})`).first();
+  const inner = wrap.locator(".choices__inner").first();
+  const busca = wrap.locator("input.choices__input--cloned").first();
+  const alvoN = norm(alvo);
+  const bateu = (t) => {
+    const tn = norm(t);
+    if (!tn || /^selecione/.test(tn)) return false;
+    return tn === alvoN || tn.includes(alvoN) || alvoN.includes(tn);
+  };
+
+  // Espera o WRAPPER (que tem dimensao) — nao o .choices__inner: dependendo de
+  // como o Choices renderiza, o inner pode ter altura zero e um waitFor
+  // "visible" nele torraria o timeout inteiro antes de seguir (o clique com
+  // force funciona de todo jeito, so custaria ~20s por dropdown).
+  await wrap.waitFor({ state: "visible", timeout: tWidget }).catch(() => {});
+  await inner.waitFor({ state: "attached", timeout: tWidget }).catch(() => {});
+  await wrap.scrollIntoViewIfNeeded().catch(() => {});
+
+  // Abre o dropdown (ate 3 tentativas; confirma pela classe is-open).
+  for (let i = 0; i < 3; i++) {
+    if (await wrap.evaluate((el) => el.classList.contains("is-open")).catch(() => false)) break;
+    await inner.click({ force: true }).catch(() => {});
+    await sleep(400);
+  }
+
+  // Filtra pelo token e seleciona o item destacado.
+  if (await busca.isVisible().catch(() => false)) {
+    await busca.fill(token);
+    await sleep(900);
+    await busca.press("Enter").catch(() => {});
+    await sleep(500);
+  }
+
+  let atual = await lerSelect(root, sel);
+
+  // Fallback: clica no item da listbox pelo texto do token.
+  if (!bateu(atual.text)) {
+    const opcao = wrap
+      .locator('.choices__list[role="listbox"] .choices__item--choice')
+      .filter({ hasText: new RegExp(token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i") })
+      .first();
+    await opcao.click({ timeout: tItem }).catch(() => {});
+    await sleep(500);
+    atual = await lerSelect(root, sel);
+  }
+
+  if (!bateu(atual.text)) {
+    // Diagnostico: lista o que o widget oferecia.
+    const opcoes = await wrap.locator('.choices__list[role="listbox"] .choices__item').allTextContents().catch(() => []);
+    await dumpFrame(root, `choices-${campo}-falha`);
+    throw new Error(`${campo}: nao selecionou "${alvo}" (token "${token}"); select ficou value="${atual.value}" text="${atual.text}". Opcoes vistas: ${JSON.stringify(opcoes.slice(0, 25))}`);
+  }
+  console.log(`[gpm] ${campo} = "${atual.text}" (value=${atual.value}).`);
+  return atual;
+}
+
+// O Tipo de Checklist e carregado por AJAX DEPOIS de escolher a Finalidade.
+// Espera o widget do #tipos ter itens de verdade antes de tentar selecionar.
+async function esperarTiposCarregar(root, cfg, timeout = 20000) {
+  const sel = cfg.selectors.tipoChecklist || "#tipos";
+  const ok = await root.waitForFunction((s) => {
+    const nativo = document.querySelector(s);
+    if (!nativo) return false;
+    const wrap = nativo.closest("div.choices");
+    const itens = wrap ? wrap.querySelectorAll('.choices__list[role="listbox"] .choices__item--choice') : [];
+    return itens.length > 0 || nativo.options.length > 1;
+  }, sel, { timeout }).then(() => true).catch(() => false);
+  if (!ok) {
+    console.warn("[gpm] Tipo de Checklist parece nao ter carregado opcoes; tento selecionar de todo jeito.");
+  }
+}
+
+// Relê os 4 inputs hidden de uma vez e confere contra o esperado. Ultimo portao
+// antes de Exportar: escolher Finalidade/Tipo dispara AJAX e pode resetar datas.
+async function conferirDatas(root, campos, esperados) {
   const lidos = [];
-  for (const sel of seletores) {
-    lidos.push(await root.locator(sel).first().inputValue().catch(() => ""));
+  for (const c of campos) {
+    lidos.push(await root.locator(c.sel).first().inputValue().catch(() => ""));
   }
   const erradas = lidos.map((v, i) => (v === esperados[i] ? null : i)).filter((i) => i !== null);
   if (erradas.length) {
     await dump(paginaDe(root), "datas-divergentes");
-    throw new Error(`Datas divergentes antes de Exportar: esperava ${JSON.stringify(esperados)}, li ${JSON.stringify(lidos)}.`);
+    const detalhe = erradas.map((i) => `${campos[i].label}: esperava "${esperados[i]}", li "${lidos[i]}"`).join(" | ");
+    throw new Error(`Datas divergentes antes de Exportar -> ${detalhe}`);
   }
   console.log(`[gpm] 4 campos de data confirmados: ${lidos.join(" | ")}`);
 }
@@ -554,20 +555,28 @@ async function baixarChecklists(page, cfg, mesAno, intervalo) {
 
   const root = await abrirChecklists(page, cfg);
 
-  // Os 4 campos recebem o MESMO par: [servico inicio, servico fim, inspecao inicio, inspecao fim].
-  const seletores = await mapearCamposData(root, cfg);
-  const valores = [vInicio, vFim, vInicio, vFim];
-  const labels = ["Data Servico Inicio", "Data Servico Fim", "Data Inspecao Inicio", "Data Inspecao Fim"];
-  for (let i = 0; i < 4; i++) {
-    await setData(root, seletores[i], valores[i], labels[i]);
+  // Os 4 campos recebem o MESMO par de datas ([servico ini, servico fim,
+  // inspecao ini, inspecao fim]); o que difere e a HORA: 00:00 nos campos de
+  // inicio, 23:59 nos de fim (enableTime esta ligado, e um fim as 00:00
+  // cortaria o ultimo dia inteiro).
+  const horaInicio = cfg.horaInicio || "00:00";
+  const horaFim = cfg.horaFim || "23:59";
+  const campos = camposData(cfg);
+  const partes = [inicio, fim, inicio, fim];
+  const horas = campos.map((c) => (c.fim ? horaFim : horaInicio));
+  for (let i = 0; i < campos.length; i++) {
+    await setDataFp(root, campos[i], partes[i], horas[i]);
   }
 
-  await selecionarOpcao(root, cfg, "finalidade", cfg.finalidade);
-  await selecionarOpcao(root, cfg, "tipoChecklist", cfg.tipoChecklist);
+  await selecionarChoices(root, cfg, "finalidade", cfg.finalidade, cfg.finalidadeSearch || "Vistoria de Obras");
+  // Tipo de Checklist so e populado por AJAX depois da Finalidade.
+  await esperarTiposCarregar(root, cfg);
+  await selecionarChoices(root, cfg, "tipoChecklist", cfg.tipoChecklist, cfg.tipoChecklistSearch || "Visita Pr");
 
-  // Selecionar dropdown pode re-renderizar a tela e resetar datas — conferimos
+  // Selecionar dropdown dispara AJAX e pode resetar datas — conferimos os 4
   // depois de tudo, imediatamente antes de Exportar.
-  await conferirDatas(root, seletores, valores);
+  const esperados = campos.map((c, i) => fmtISO(partes[i], horas[i]));
+  await conferirDatas(root, campos, esperados);
 
   const r = await exportar(page, root, cfg);
   if (r.vazio) return { vazio: true };
@@ -580,6 +589,7 @@ async function baixarChecklists(page, cfg, mesAno, intervalo) {
 
 module.exports = {
   login, baixarChecklists, extrairCsv, dump, dumpFrame,
-  rootDaTela, abrirChecklists, mapearCamposData, acharSelect, selecionarOpcao, setData,
-  conferirDatas, toastVazio, norm, primeiroVisivel,
+  rootDaTela, abrirChecklists, camposData, fmtISO, setDataFp, lerSelect,
+  selecionarChoices, esperarTiposCarregar, conferirDatas, toastVazio, exportar,
+  norm, primeiroVisivel,
 };

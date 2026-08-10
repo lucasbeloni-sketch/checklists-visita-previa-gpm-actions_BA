@@ -52,25 +52,50 @@ fallback. Se for o mesmo, basta não criar os `GPM_BA_*`.
 (`workflow_dispatch`, com checkbox `dry_run`). `concurrency` impede dois runs
 escrevendo o mesmo arquivo do mês.
 
-## Calibração (fazer ANTES do primeiro run real)
+## Tela do GPM — calibrado em 2026-08-10
 
-O `config.json` está com `checklistsUrl: null` e os seletores da tela em `null`
-— o código funciona por heurística (navega o menu por texto, acha os 4 inputs
-de data por ordem visual, acha os selects por label/id), mas fixar os valores
-reais deixa o robô determinístico:
+Rodado `npm run inspect` no DOM real. O que está no `config.json` hoje:
+
+| Item | Valor real |
+|---|---|
+| Rota | `/ci/Seguranca/ChecklistPerguntaResposta` (código de tela `GR669`) |
+| Onde vive | dentro do iframe `#frameTelasGPM` |
+| Datas | **flatpickr com `altInput`**: o input visível não tem id; o form submete os hidden `#data_inicial`, `#data_final`, `#data_insp_in`, `#data_insp_out` em `Y-m-d H:i` |
+| Finalidade | `<select id="finalidade">` escondido atrás de widget **Choices.js** |
+| Tipo de Checklist | `<select id="tipos">`, também Choices.js, **populado por AJAX só depois** de escolher a Finalidade |
+| Exportar | `button.btn-success` sem id → casado por classe + texto |
+
+Duas consequências que mudaram o código:
+
+**1. Horas são parte do filtro.** Os 4 campos têm `enableTime: true`. Os
+`data-options` do próprio GPM usam `defaultHour` `00:00` nos campos de início
+(classe `dta-zero`) e `23:59` nos de fim (`dta-fim`). O robô seta esses horários
+explicitamente — um fim às `00:00` cortaria o último dia inteiro do intervalo.
+Vale conferir se os CSVs que a Skill gerava por computer-use não estavam
+perdendo o último dia por isso.
+
+**2. Nada de `<select>` nativo.** Choices.js tira as opções do select e as
+mantém em DOM próprio, com filtro fuzzy na busca. O robô abre o widget, digita
+um **token curto** (`finalidadeSearch` / `tipoChecklistSearch` no config —
+digitar a string inteira não casa), dá Enter e **confere pelo select nativo**,
+que é o que o submit usa. Mesmo caminho já validado no repo irmão de CE.
+
+Se o GPM renomear as opções, ajuste os tokens no `config.json` e rode o
+`inspect` de novo.
+
+### Recalibrar / validar
 
 ```bash
 npm install
 npx playwright install chromium
 
-# 1) Abre o browser visível, você faz o login, e ele lista os candidatos:
+# Abre o browser visível, você faz o login, e ele redespeja os candidatos:
 HEADED=1 npm run inspect
-#    -> cole "checklistsUrl" e os ids em config.json > selectors
 
-# 2) Confere se a service account alcança a pasta do Drive:
+# Confere se a service account alcança a pasta do Drive:
 GOOGLE_CREDENTIALS="$(cat credentials.json)" npm run check
 
-# 3) Ensaio completo sem escrever no Drive:
+# Ensaio completo sem escrever no Drive:
 GPM_BA_USER=... GPM_BA_PASS=... DRY_RUN=1 npm start
 ```
 
