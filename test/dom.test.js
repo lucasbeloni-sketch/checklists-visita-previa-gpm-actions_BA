@@ -89,8 +89,14 @@ const OPCOES_FINALIDADE = [
   ["1", "1 - Veicular - turno"], ["2", "2 - Veicular - Fim de turno"],
   ["10", "10 - Vistoria de Obras Elétricas"],
 ];
+// Lista REAL capturada no GPM (run 31422888135). Cinco opcoes contem
+// "Visita Prévia" — casar por substring pegava a LPT em vez da UTD.
 const OPCOES_TIPOS = [
-  ["7", "UTD - Visita Prévia-BA"], ["8", "UTD - Pós Obra-BA"],
+  ["61", "CCM - AS-BUILT - BA"], ["69", "LPT - Visita Prévia-BA"],
+  ["70", "Manutenção - Visita Prévia-BA"], ["71", "Oportunidades de Campo"],
+  ["72", "Poda Manut. - Visita Prévia-BA"], ["7", "UTD - Visita Prévia-BA"],
+  ["73", "Validação- Clientes - LPT"], ["74", "Visita Prévia (Concluídas)"],
+  ["75", "Vistoria Prévia - RS"],
 ];
 function montaChoices(select, opcoes) {
   const wrap = select.closest("div.choices");
@@ -263,5 +269,41 @@ test("botao Exportar e achado pelo seletor calibrado (btn-success + texto)", { s
   try {
     const botao = await primeiroVisivel(page, [CFG.selectors.exportar], { timeout: 5000 });
     assert.strictEqual((await botao.textContent()).trim(), "Exportar");
+  } finally { await browser.close(); }
+});
+
+test("tipo: escolhe UTD e nao a LPT, apesar de 5 opcoes conterem 'Visita Prévia'", { skip: !temChromium }, async () => {
+  // Regressao do run 31422888135: o token "Visita Pr" filtrava 5 itens e o
+  // Enter pegava o primeiro (LPT - Visita Prévia-BA). Agora clicamos no item de
+  // texto exatamente igual ao alvo.
+  const { browser, page } = await abrir();
+  try {
+    await selecionarChoices(page, CFG, "finalidade", CFG.finalidade, CFG.finalidadeSearch);
+    await esperarTiposCarregar(page, CFG);
+    const t = await selecionarChoices(page, CFG, "tipoChecklist", CFG.tipoChecklist, CFG.tipoChecklistSearch);
+    assert.strictEqual(t.value, "7", "tem que ser a UTD (value 7), nao a LPT (69)");
+    assert.strictEqual(t.text, "UTD - Visita Prévia-BA");
+  } finally { await browser.close(); }
+});
+
+test("tipo: mesmo com token ambiguo ('Visita Pr') acerta a UTD pelo texto exato", { skip: !temChromium }, async () => {
+  const { browser, page } = await abrir();
+  try {
+    await selecionarChoices(page, CFG, "finalidade", CFG.finalidade, CFG.finalidadeSearch);
+    await esperarTiposCarregar(page, CFG);
+    const t = await selecionarChoices(page, CFG, "tipoChecklist", CFG.tipoChecklist, "Visita Pr");
+    assert.strictEqual(t.value, "7");
+  } finally { await browser.close(); }
+});
+
+test("tipo: recusa quando o alvo nao existe na lista (nao aceita parecido)", { skip: !temChromium }, async () => {
+  const { browser, page } = await abrir();
+  try {
+    await selecionarChoices(page, CFG, "finalidade", CFG.finalidade, CFG.finalidadeSearch);
+    await esperarTiposCarregar(page, CFG);
+    await assert.rejects(
+      () => selecionarChoices(page, CFG, "tipoChecklist", "XPTO - Visita Prévia-BA", "Visita Pr", RAPIDO),
+      /nao selecionou "XPTO - Visita Prévia-BA"/
+    );
   } finally { await browser.close(); }
 });

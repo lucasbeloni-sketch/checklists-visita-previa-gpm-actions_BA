@@ -346,10 +346,14 @@ async function selecionarChoices(root, cfg, campo, alvo, token, tms = {}) {
   const inner = wrap.locator(".choices__inner").first();
   const busca = wrap.locator("input.choices__input--cloned").first();
   const alvoN = norm(alvo);
+  // Aceita SO o texto exato (normalizado). Frouxo aqui e perigoso: o dropdown de
+  // Tipo de Checklist tem 5 opcoes contendo "Visita Prévia" (LPT, Manutenção,
+  // Poda Manut., UTD, "Visita Prévia (Concluídas)") — casar por substring
+  // exportaria o checklist do contrato errado sem ninguem perceber.
   const bateu = (t) => {
     const tn = norm(t);
     if (!tn || /^selecione/.test(tn)) return false;
-    return tn === alvoN || tn.includes(alvoN) || alvoN.includes(tn);
+    return tn === alvoN || tn.replace(/\s+/g, "") === alvoN.replace(/\s+/g, "");
   };
 
   // Espera o WRAPPER (que tem dimensao) — nao o .choices__inner: dependendo de
@@ -367,23 +371,37 @@ async function selecionarChoices(root, cfg, campo, alvo, token, tms = {}) {
     await sleep(400);
   }
 
-  // Filtra pelo token e seleciona o item destacado.
+  // Filtra pelo token (o filtro do Choices e fuzzy: a string inteira costuma
+  // nao casar, por isso o token curto do config).
   if (await busca.isVisible().catch(() => false)) {
     await busca.fill(token);
     await sleep(900);
-    await busca.press("Enter").catch(() => {});
+  }
+
+  // Clica no item cujo texto e EXATAMENTE o alvo. Nao usamos Enter aqui: Enter
+  // seleciona o item destacado, que e o primeiro da lista filtrada — e com 5
+  // opcoes contendo "Visita Prévia" o primeiro foi "LPT - Visita Prévia-BA".
+  const itens = wrap.locator('.choices__list[role="listbox"] .choices__item--choice');
+  const idxExato = await itens.evaluateAll((els, alvoN) => {
+    const norm = (s) => String(s ?? "").normalize("NFD").replace(/[̀-ͯ]/g, "")
+      .toLowerCase().replace(/\s+/g, " ").trim();
+    const semEspaco = (s) => norm(s).replace(/\s+/g, "");
+    let i = els.findIndex((el) => norm(el.textContent) === alvoN);
+    if (i < 0) i = els.findIndex((el) => semEspaco(el.textContent) === semEspaco(alvoN));
+    return i;
+  }, alvoN).catch(() => -1);
+
+  if (idxExato >= 0) {
+    await itens.nth(idxExato).click({ timeout: tItem }).catch(() => {});
     await sleep(500);
   }
 
   let atual = await lerSelect(root, sel);
 
-  // Fallback: clica no item da listbox pelo texto do token.
-  if (!bateu(atual.text)) {
-    const opcao = wrap
-      .locator('.choices__list[role="listbox"] .choices__item--choice')
-      .filter({ hasText: new RegExp(token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i") })
-      .first();
-    await opcao.click({ timeout: tItem }).catch(() => {});
+  // Fallback: sem item exato visivel (filtro pode ter escondido), tenta o Enter
+  // no destacado. Se pegar o item errado, a conferencia abaixo derruba a rodada.
+  if (!bateu(atual.text) && (await busca.isVisible().catch(() => false))) {
+    await busca.press("Enter").catch(() => {});
     await sleep(500);
     atual = await lerSelect(root, sel);
   }
@@ -392,7 +410,7 @@ async function selecionarChoices(root, cfg, campo, alvo, token, tms = {}) {
     // Diagnostico: lista o que o widget oferecia.
     const opcoes = await wrap.locator('.choices__list[role="listbox"] .choices__item').allTextContents().catch(() => []);
     await dumpFrame(root, `choices-${campo}-falha`);
-    throw new Error(`${campo}: nao selecionou "${alvo}" (token "${token}"); select ficou value="${atual.value}" text="${atual.text}". Opcoes vistas: ${JSON.stringify(opcoes.slice(0, 25))}`);
+    throw new Error(`${campo}: nao selecionou "${alvo}" (token "${token}", item exato ${idxExato >= 0 ? `achado no indice ${idxExato}` : "NAO achado"}); select ficou value="${atual.value}" text="${atual.text}". Opcoes vistas: ${JSON.stringify(opcoes.slice(0, 25))}`);
   }
   console.log(`[gpm] ${campo} = "${atual.text}" (value=${atual.value}).`);
   return atual;

@@ -15,9 +15,9 @@
   "finalidade": "10 - Vistoria de Obras Elétricas",
   "tipoChecklist": "UTD - Visita Prévia-BA",
 
-  "_comentario_busca": "Os dropdowns sao Choices.js com filtro fuzzy: digitar a string inteira NAO acha (o filtro descarta). Digitamos so este token curto e confirmamos pelo <select> nativo. Ajuste se o GPM renomear as opcoes.",
+  "_comentario_busca": "Os dropdowns sao Choices.js com filtro fuzzy: digitar a string inteira NAO acha (o filtro descarta). Digitamos so este token curto, clicamos no item de texto EXATO e confirmamos pelo <select> nativo. O token precisa ser DISCRIMINANTE: existem 5 tipos contendo 'Visita Previa' (LPT, Manutencao, Poda Manut., UTD e 'Visita Previa (Concluidas)') — o token 'Visita Pr' casava com LPT e derrubava a rodada.",
   "finalidadeSearch": "Vistoria de Obras",
-  "tipoChecklistSearch": "Visita Pr",
+  "tipoChecklistSearch": "UTD - Visita",
 
   "_comentario_horas": "CALIBRADO no DOM (2026-08-10): os 4 campos sao flatpickr com enableTime e altInput. O form submete os inputs HIDDEN (#data_inicial etc) em Y-m-d H:i; o input visivel e o altInput em d/m/Y H:i. Os data-options do proprio GPM usam defaultHour 00:00 nos campos de inicio (classe dta-zero) e 23:59 nos de fim (classe dta-fim) — o robo seta esses horarios EXPLICITAMENTE, senao um fim as 00:00 cortaria o ultimo dia inteiro do intervalo.",
   "horaInicio": "00:00",
