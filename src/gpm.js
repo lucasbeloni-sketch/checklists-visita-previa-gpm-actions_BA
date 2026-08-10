@@ -573,12 +573,18 @@ async function exportar(page, root, cfg, { graceMs = 6000 } = {}) {
   // Arma os listeners ANTES do clique (o clique pode abrir popup).
   let onPage;
   const viaPopup = new Promise((resolve) => {
-    onPage = (p) => p.waitForEvent("download", { timeout: 45000 }).then(resolve).catch(() => {});
+    // So resolve com um download DE VERDADE: waitForEvent().catch(()=>{}) resolve
+    // undefined no timeout, e resolver a corrida com undefined virava
+    // "Export sem objeto de download" (erro fatal) num caso que era so popup sem
+    // download — visto no combo F do run 31424949402.
+    onPage = (p) => p.waitForEvent("download", { timeout: 45000 })
+      .then((d) => { if (d) resolve(d); })
+      .catch(() => {});
     ctx.on("page", onPage);
   });
   const viaPage = page.waitForEvent("download", { timeout: 47000 });
   let baixando = false;
-  const marcaDownload = (d) => { baixando = true; return d; };
+  const marcaDownload = (d) => { if (d) baixando = true; return d; };
 
   let download = null;
   try {
