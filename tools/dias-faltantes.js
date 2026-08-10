@@ -29,20 +29,38 @@ const { mesAnoD1 } = require("../src/util");
       continue;
     }
     for (const b of r.buracos) {
-      console.log(`  ${b.arquivo}: falta ${b.dataBR} (${b.diaSemana}) — media do mes ${b.mediaDiaDoMes}/dia em ${b.diasComDado} dias`);
+      const marca = b.forca === "alta" ? "" : "  [evidencia fraca]";
+      console.log(`  ${b.arquivo}: falta ${b.dataBR} (${b.diaSemana}) — media do mes ${b.mediaDiaDoMes}/dia, media de ${b.diaSemana} ${b.mediaMesmoDiaSemana}/dia${marca}`);
       todos.push(b);
     }
     if (!r.buracos.length) console.log(`  ${f.name}: sem buraco de fim de mes`);
   }
 
-  console.log(`\n=== ${todos.length} dia(s) faltando ===`);
+  const fortes = todos.filter((b) => b.forca === "alta");
+  const fracos = todos.filter((b) => b.forca !== "alta");
+
+  console.log(`\n=== ${fortes.length} dia(s) provavelmente perdidos ===`);
   const porArquivo = {};
-  for (const b of todos) (porArquivo[b.arquivo] ||= []).push(b.dataBR);
+  for (const b of fortes) (porArquivo[b.arquivo] ||= []).push(b.dataBR);
   for (const [arq, datas] of Object.entries(porArquivo)) {
     console.log(`  ${arq}: ${datas.join(", ")}`);
   }
 
-  if (todos.length) {
+  // Evidencia fraca = esse dia da semana normalmente nao tem execucao, entao o
+  // zero provavelmente e real. Caso concreto: 28/02/2026 (sab) e 31/05/2026
+  // (dom) continuaram listados depois do backfill porque de fato nao houve
+  // execucao neles — as linhas recuperadas tinham Data Execução em outra data.
+  if (fracos.length) {
+    console.log(`\n=== ${fracos.length} dia(s) de evidencia FRACA (provavelmente vazio legitimo) ===`);
+    const pf = {};
+    for (const b of fracos) (pf[b.arquivo] ||= []).push(`${b.dataBR} (${b.diaSemana}, media ${b.mediaMesmoDiaSemana}/dia)`);
+    for (const [arq, datas] of Object.entries(pf)) {
+      console.log(`  ${arq}: ${datas.join(", ")}`);
+    }
+    console.log(`  (backfill nesses dias tende a nao mudar nada — rode so se quiser confirmar)`);
+  }
+
+  if (fortes.length) {
     console.log(`\nPra recuperar (precisa das credenciais do GPM BA):`);
     console.log(`  DRY_RUN=1 npm run backfill        # ensaio: exporta e mostra o que mudaria, sem gravar`);
     console.log(`  npm run backfill                  # grava no Drive`);

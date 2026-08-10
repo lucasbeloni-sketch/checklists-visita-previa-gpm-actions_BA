@@ -128,7 +128,21 @@ de cada intervalo ficava fora**. Nos meses em andamento isso se corrigia no dia
 seguinte; nos meses **fechados** a última escrita foi a do dia 1º do mês
 seguinte, e aquele último dia ficou zerado para sempre.
 
-Detectado na base: **31 dias faltando** (2023: 8, 2024: 9, 2025: 9, 2026: 5).
+Detectado na base: 31 dias. **Status em 10/08/2026:**
+
+| | Situação |
+|---|---|
+| 2026 (5 dias) | **recuperados** (run 31428404849): +31 registros nos arquivos `02`, `03`, `05`, `06`, `07` |
+| 2023–2025 (25 dias, evid. forte) | **bloqueados**: o export de hoje tem 77 colunas, os anuais têm 81 — merge desalinharia, e reexportar o ano **apagaria** respostas de perguntas que saíram do questionário |
+| 3 dias de evid. fraca | provavelmente vazio legítimo (sáb/dom sem execução no mês) |
+
+O detector separa evidência **forte** (dia da semana comparável costuma ter
+registro) de **fraca** (esse dia da semana normalmente tem ~0). Ele lê só a
+coluna `Data Execução`, e o filtro do GPM é por Data Serviço/Inspeção — então um
+dia pode continuar listado mesmo depois de recuperado, se as linhas trazidas
+tiverem execução em outra data. Foi o que houve com `28/02/2026`, `31/05/2026` e
+`31/05/2026`: o registro entrou, mas naquele dia ninguém executou nada. Rodar o
+backfill neles de novo é inofensivo (substitui pelo mesmo conteúdo).
 
 ```bash
 # Só lê o Drive, não toca no GPM — revise o escopo antes de exportar nada:

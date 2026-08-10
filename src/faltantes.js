@@ -66,13 +66,35 @@ function analisar(nome, buf, { colunaData = 6, mesCorrente = null } = {}) {
     if ((conta[chaveUltimo] || 0) > 0) continue; // ultimo dia presente: ok
 
     const registros = doMes.reduce((a, k) => a + conta[k], 0);
+    const wd = diaDaSemana(ano, mes, ultimo);
+
+    // Forca da evidencia. O criterio "ultimo dia sem Data Execução" e heuristico:
+    // ele nao distingue "dia perdido pelo filtro" de "dia em que ninguem
+    // executou nada". Comparamos com a media dos OUTROS dias da MESMA semana no
+    // mes: se sabado/domingo costuma ter ~0 execucao, um ultimo dia zerado no
+    // fim de semana e provavelmente legitimo, nao buraco.
+    // Caso real: 28/02/2026 (sab) e 31/05/2026 (dom) continuaram "faltando"
+    // depois do backfill porque de fato nao houve execucao nesses dias — as
+    // linhas recuperadas tinham Data Execução em outra data.
+    const mesmoDia = doMes.filter((k) => {
+      const d = Number(k.slice(0, 2));
+      return diaDaSemana(ano, mes, d) === wd;
+    });
+    const mediaMesmoDiaSemana = mesmoDia.length
+      ? mesmoDia.reduce((a, k) => a + conta[k], 0) / mesmoDia.length
+      : 0;
+
     buracos.push({
       arquivo: nome,
       data: { ano, mes, dia: ultimo },
       dataBR: chaveUltimo,
-      diaSemana: diaDaSemana(ano, mes, ultimo),
+      diaSemana: wd,
       mediaDiaDoMes: Math.round(registros / doMes.length),
+      mediaMesmoDiaSemana: Math.round(mediaMesmoDiaSemana * 10) / 10,
       diasComDado: doMes.length,
+      // "alta" = dia comparavel costuma ter registro, entao zero e suspeito.
+      // "fraca" = esse dia da semana normalmente tem ~0; provavelmente legitimo.
+      forca: mediaMesmoDiaSemana >= 1 ? "alta" : "fraca",
     });
   }
   return { nome, escopo: mMes ? "mes" : "ano", total, buracos };

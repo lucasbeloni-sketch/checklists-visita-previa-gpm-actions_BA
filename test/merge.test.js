@@ -132,3 +132,28 @@ test("analisar percorre os 12 meses de um arquivo anual e pula mes sem dado", ()
 test("analisar ignora nome fora do padrao", () => {
   assert.strictEqual(analisar("COMPILADO.csv", `${H}\n`).escopo, "desconhecido");
 });
+
+test("analisar classifica evidencia: dia util zerado = alta, fim de semana sem movimento = fraca", () => {
+  const p = (n) => String(n).padStart(2, "0");
+  // Maio/2026: 31/05 e domingo. Enchemos so os dias de semana; domingos ficam 0.
+  const linhas = [];
+  for (let d = 1; d <= 30; d++) {
+    const wd = new Date(Date.UTC(2026, 4, d)).getUTCDay();
+    if (wd === 0) continue;                 // domingo sem execucao
+    for (let i = 0; i < 12; i++) linhas.push(linha(`2026${p(5)}${p(d)}${i}`, `${p(d)}/05/2026`));
+  }
+  const r = analisar("05.2026.csv", `${H}\n${linhas.join("\n")}\n`);
+  assert.strictEqual(r.buracos.length, 1);
+  assert.strictEqual(r.buracos[0].dataBR, "31/05/2026");
+  assert.strictEqual(r.buracos[0].diaSemana, "dom");
+  assert.strictEqual(r.buracos[0].forca, "fraca", "domingo sem movimento no mes todo = evidencia fraca");
+
+  // Julho/2026: 31/07 e sexta, e as outras sextas tem movimento -> alta.
+  const jul = [];
+  for (let d = 1; d <= 30; d++) {
+    for (let i = 0; i < 12; i++) jul.push(linha(`2026${p(7)}${p(d)}${i}`, `${p(d)}/07/2026`));
+  }
+  const r2 = analisar("07.2026.csv", `${H}\n${jul.join("\n")}\n`);
+  assert.strictEqual(r2.buracos[0].dataBR, "31/07/2026");
+  assert.strictEqual(r2.buracos[0].forca, "alta");
+});
