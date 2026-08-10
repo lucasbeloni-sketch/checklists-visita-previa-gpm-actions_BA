@@ -10,7 +10,8 @@
     "inspect": "node tools/inspect.js",
     "check": "node tools/check-drive.js",
     "backfill": "node src/backfill.js",
-    "faltantes": "node tools/dias-faltantes.js"
+    "faltantes": "node tools/dias-faltantes.js",
+    "diag": "node tools/diag-filtros.js"
   },
   "dependencies": {
     "adm-zip": "^0.5.16",

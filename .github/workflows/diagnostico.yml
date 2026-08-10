@@ -1,0 +1,58 @@
+name: Diagnostico de filtros (manual)
+
+# Roda tools/diag-filtros.js: testa combinacoes de filtro de data no mesmo
+# periodo e reporta quantas linhas cada uma devolve. Nao grava nada no Drive.
+# Usado pra entender por que "servico+inspecao ambos preenchidos" voltou vazio
+# num periodo que comprovadamente tem dados.
+on:
+  workflow_dispatch:
+    inputs:
+      periodo:
+        description: 'Periodo a testar: "dd/mm/aaaa,dd/mm/aaaa". Vazio = D-1 (mes de ontem ate ontem).'
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: checklists-visita-previa-ba
+  cancel-in-progress: false
+
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "20"
+
+      - name: Install deps
+        run: npm ci || npm install
+
+      - name: Install Chromium (Playwright)
+        run: npx playwright install --with-deps chromium
+
+      - name: Diagnostico
+        shell: bash
+        run: set -o pipefail; npm run diag 2>&1 | tee diag.log
+        env:
+          GPM_BA_USER: ${{ secrets.GPM_BA_USER }}
+          GPM_BA_PASS: ${{ secrets.GPM_BA_PASS }}
+          GPM_USER: ${{ secrets.GPM_USER }}
+          GPM_PASS: ${{ secrets.GPM_PASS }}
+          PERIODO: ${{ inputs.periodo }}
+
+      - name: Upload log + debug
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: diag
+          path: |
+            diag.log
+            debug/
+          if-no-files-found: warn
+          retention-days: 14
