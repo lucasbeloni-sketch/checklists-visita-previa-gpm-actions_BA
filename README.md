@@ -128,13 +128,28 @@ de cada intervalo ficava fora**. Nos meses em andamento isso se corrigia no dia
 seguinte; nos meses **fechados** a última escrita foi a do dia 1º do mês
 seguinte, e aquele último dia ficou zerado para sempre.
 
-Detectado na base: 31 dias. **Status em 10/08/2026:**
+**Status: concluído em 11/08/2026.**
 
 | | Situação |
 |---|---|
-| 2026 (5 dias) | **recuperados** (run 31428404849): +31 registros nos arquivos `02`, `03`, `05`, `06`, `07` |
-| 2023–2025 (25 dias, evid. forte) | **bloqueados**: o export de hoje tem 77 colunas, os anuais têm 81 — merge desalinharia, e reexportar o ano **apagaria** respostas de perguntas que saíram do questionário |
-| 3 dias de evid. fraca | provavelmente vazio legítimo (sáb/dom sem execução no mês) |
+| 2026 (5 dias) | **recuperados dentro dos próprios arquivos** (run 31428404849): +31 registros em `02`, `03`, `05`, `06`, `07` |
+| 2023–2025 (26 dias) | **recuperados em arquivo separado** (run 31486052453): `dias_recuperados_2023-2025.csv`, **237 registros**, 87 colunas — 2023: 60, 2024: 71, 2025: 106 |
+| 5 desses 26 dias | vazios de verdade — não houve visita (30/04/2023, 31/12/2023, 30/11/2024, 31/08/2025, 30/11/2025) |
+
+Por que 2023–2025 foi para arquivo separado: **o export traz uma coluna por
+pergunta, e só as perguntas presentes nos registros filtrados**. Exportando um
+dia de cada mês, o número de colunas variou entre 67 e 78 — e dois dias com 67
+colunas tinham conjuntos de perguntas *diferentes*. Não existe schema estável nem
+dentro do mesmo ano, então:
+
+- colar as linhas nos anuais (81 e 69 colunas) desalinharia respostas;
+- reexportar o ano inteiro **apagaria** as respostas das perguntas que saíram do
+  formulário — os arquivos históricos são mais ricos que qualquer export atual.
+
+O arquivo separado tem a **união** das perguntas (87 colunas), casadas por nome;
+cada linha preenche o que tem e deixa vazio o que não se aplica. Validado após o
+upload: 237 linhas com exatamente 87 campos cada, 237 `cod_checklist` únicos e
+**zero** colisão com os anuais.
 
 O detector separa evidência **forte** (dia da semana comparável costuma ter
 registro) de **fraca** (esse dia da semana normalmente tem ~0). Ele lê só a
@@ -155,10 +170,11 @@ DIAS="31/07/2026" npm run backfill      # só um dia (valide com um antes dos 31
 
 Duas estratégias, escolhidas pelo nome do arquivo de destino:
 
-| Destino | Estratégia | Por quê |
+| Modo | Estratégia | Quando |
 |---|---|---|
-| `mm.aaaa.csv` (2026) | reexporta o **mês inteiro** e substitui | mesmo nº de exports que pegar 1 dia, e sem risco de merge: o arquivo sai todo de um export só |
-| `aaaa.csv` (2023–2025) | exporta **só o dia** e mescla | reexportar o ano custaria 12 exports/ano e reescreveria o arquivo com o questionário **atual** — o schema mudou (2023: 69 colunas, 2025: 81, 2026: 78) e isso quebraria quem lê esses arquivos |
+| padrão, destino `mm.aaaa.csv` | reexporta o **mês inteiro** e substitui | arquivo = 1 mês, então o export cobre o arquivo todo e não há merge |
+| padrão, destino `aaaa.csv` | exporta **só o dia** e mescla, com guarda de cabeçalho | na prática sempre barra, porque o schema mudou — use o modo SAIDA |
+| `SAIDA=<nome.csv>` | exporta cada dia e junta num arquivo **novo**, por união de colunas | quando os cabeçalhos divergem (o caso de 2023–2025) |
 
 Guardas do merge (`src/merge.js`):
 
