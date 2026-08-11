@@ -5,6 +5,9 @@
   "_comentario_url": "CALIBRADO no menu real (2026-08-10, via npm run inspect): Seguranca > Checklists > Exportacoes > Checklists Pergunta/Resposta = codigo de tela GR669, aberto pelo shell via abrirTela(). goto direto pode vir SEM o shell/iframe; o codigo trata os dois casos. NAO confundir com /ci/Seguranca/ExportacaoChecklist (GR674) nem ExportacaoChecklistNIS (GR688), que sao outras telas.",
   "checklistsUrl": "https://sirtecba.gpm.srv.br/ci/Seguranca/ChecklistPerguntaResposta",
 
+  "_comentario_tela": "Codigo da tela no menu do GPM. O robo abre a tela chamando a propria funcao do shell — abrirTela(checklistsUrl, 0, telaCodigo, titulo) — em vez de dar goto na URL: o goto funciona na primeira vez, mas depois de um export vazio devolve a pagina crua sem iframe e a tela nao carrega (derrubou 25 de 26 dias no run 31484229093).",
+  "telaCodigo": "GR669",
+
   "_comentario_destino": "Pasta Checklists_Visita_Previa em G:\\Drives compartilhados\\PCP\\Time CCM - BA\\Controle\\Arquivos. A service account precisa de acesso EDITOR nela (Shared Drive do BA, diferente do CE).",
   "destFolderId": "1Mw44sdaQTsyuGeuttNPJVOIK_68asTvL",
   "timezone": "America/Sao_Paulo",

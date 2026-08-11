@@ -190,50 +190,58 @@ function marcadoresDaTela(cfg) {
   ];
 }
 
-// Abre a tela de exportacao. Dois caminhos:
-//  1) cfg.checklistsUrl setado (rota calibrada) -> goto direto.
-//  2) null -> navega o menu lateral clicando por texto:
-//     Seguranca > Checklists > Exportacoes > Checklists Pergunta/Resposta.
-// O menu do GPM e accordion: clicar no pai expande, o filho aparece depois.
-async function abrirChecklists(page, cfg) {
-  if (cfg.checklistsUrl) {
-    await page.goto(cfg.checklistsUrl, { waitUntil: "domcontentloaded" });
-    const root = await rootDaTela(page);
-    await primeiroVisivel(root, marcadoresDaTela(cfg), { timeout: 20000 });
-    console.log(`[gpm] tela aberta direto por URL (${cfg.checklistsUrl}).`);
-    return root;
+// Abre a tela de exportacao usando o mecanismo do PROPRIO app: os links do menu
+// chamam `abrirTela(url, 0, 'GR669', 'Checklists Pergunta/Resposta')`, que monta
+// a tela dentro do iframe do shell. Voltamos sempre pra home antes, porque e de
+// la que a funcao existe.
+//
+// Por que nao `goto` direto na URL da tela: funciona na PRIMEIRA vez, mas depois
+// de um export que voltou vazio (o GPM reseta a tela) o goto passa a devolver a
+// pagina crua, sem shell nem iframe, e os marcadores nunca aparecem. Foi o que
+// derrubou 25 dos 26 dias no run 31484229093 — todos com
+// "sem iframe — operando na propria pagina". Num backfill sao dezenas de
+// aberturas seguidas, entao a navegacao precisa ser repetivel, nao so funcionar
+// na primeira.
+//
+// `goto` direto fica como fallback, e tudo isso com retry: o GPM engasga.
+async function abrirChecklists(page, cfg, { tentativas = 3 } = {}) {
+  const alvoUrl = cfg.checklistsUrl;
+  const cod = cfg.telaCodigo || "GR669";
+  const titulo = "Checklists Pergunta/Resposta";
+  let ultimo;
+
+  for (let i = 1; i <= tentativas; i++) {
+    try {
+      await page.goto(cfg.baseUrl, { waitUntil: "domcontentloaded" });
+      await sleep(1200);
+
+      const viaShell = alvoUrl
+        ? await page.evaluate(({ url, cod, titulo }) => {
+            if (typeof window.abrirTela !== "function") return false;
+            window.abrirTela(url, 0, cod, titulo);
+            return true;
+          }, { url: alvoUrl, cod, titulo }).catch(() => false)
+        : false;
+
+      if (!viaShell) {
+        if (!alvoUrl) throw new Error("checklistsUrl nao configurado e o shell nao expoe abrirTela()");
+        console.log("[gpm] shell sem abrirTela(); tentando goto direto na URL da tela.");
+        await page.goto(alvoUrl, { waitUntil: "domcontentloaded" });
+      }
+
+      const root = await rootDaTela(page, { timeout: 20000 });
+      await primeiroVisivel(root, marcadoresDaTela(cfg), { timeout: 20000 });
+      console.log(`[gpm] tela aberta (${viaShell ? `abrirTela ${cod}` : "goto direto"}).`);
+      return root;
+    } catch (e) {
+      ultimo = e;
+      console.warn(`[gpm] abrir tela: tentativa ${i}/${tentativas} falhou (${e.message}).`);
+      await sleep(2500);
+    }
   }
 
-  console.log("[gpm] checklistsUrl=null — navegando pelo menu lateral.");
-  await page.goto(cfg.baseUrl, { waitUntil: "domcontentloaded" });
-  await sleep(1500);
-
-  // Clica um item de menu por texto (no shell, fora do iframe). Tolerante a
-  // acento: tentamos regex com e sem acentuacao.
-  const clicarMenu = async (regex, label) => {
-    const alvo = await primeiroVisivel(page, [
-      (p) => p.getByRole("link", { name: regex }),
-      (p) => p.locator("a, span.nav-link-text, li").filter({ hasText: regex }),
-    ], { timeout: 15000 }).catch(() => null);
-    if (!alvo) {
-      await dump(page, `menu-sem-${label}`);
-      throw new Error(`Item de menu "${label}" nao encontrado. Rode 'npm run inspect' e fixe checklistsUrl no config.json.`);
-    }
-    await alvo.scrollIntoViewIfNeeded().catch(() => {});
-    await alvo.click({ force: true }).catch(() => {});
-    await sleep(1200);
-  };
-
-  await clicarMenu(/^\s*Seguran[cç]a\s*$/i, "Seguranca");
-  await clicarMenu(/^\s*Checklists\s*$/i, "Checklists");
-  await clicarMenu(/^\s*Exporta[cç][oõ]es\s*$/i, "Exportacoes");
-  await clicarMenu(/Checklists\s+Pergunta\s*\/?\s*Resposta/i, "Checklists Pergunta/Resposta");
-
-  const root = await rootDaTela(page);
-  await primeiroVisivel(root, marcadoresDaTela(cfg), { timeout: 20000 });
-  const url = paginaDe(root).url();
-  console.log(`[gpm] tela aberta pelo menu. URL atual: ${url} (cole em checklistsUrl no config.json pra acelerar).`);
-  return root;
+  await dump(page, "abrir-tela-falha");
+  throw new Error(`Nao consegui abrir a tela de Checklists em ${tentativas} tentativas. Ultimo erro: ${ultimo && ultimo.message}`);
 }
 
 // Os 4 campos de data. CALIBRADO: sao flatpickr com altInput -> existem DOIS
