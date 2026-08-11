@@ -8,6 +8,7 @@
 const { Readable } = require("stream");
 const { google } = require("googleapis");
 const { getAuthClient, withRetry } = require("../lib/google");
+const { comBom } = require("./uniao");
 
 const SCOPES = ["https://www.googleapis.com/auth/drive"];
 
@@ -21,7 +22,12 @@ function escapaQuery(s) {
 }
 
 // Sobe/atualiza o CSV. Retorna { acao: "updated"|"created", id, duplicatas }.
-async function uploadCsv(buffer, nomeFinal, cfg) {
+async function uploadCsv(conteudo, nomeFinal, cfg) {
+  // Ponto unico por onde todo upload passa, entao e aqui que garantimos o BOM de
+  // UTF-8: sem ele o Excel le o arquivo como Latin-1 e a acentuacao aparece
+  // quebrada ("NÃ£o" em vez de "Não"). O CSV do GPM ja vem com BOM; o parser
+  // daqui tira na leitura, entao tem que voltar na escrita.
+  const buffer = comBom(conteudo);
   const drive = await getDrive();
   const folderId = cfg.destFolderId;
 

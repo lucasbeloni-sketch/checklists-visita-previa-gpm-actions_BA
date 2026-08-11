@@ -89,3 +89,30 @@ test("uniao de 3 schemas diferentes: total de linhas preservado", () => {
   // toda linha tem o mesmo numero de campos que o cabecalho
   for (const r of u.rows) assert.strictEqual(r.length, u.header.length);
 });
+
+test("comBom poe o BOM de UTF-8 e nao duplica se ja tiver", () => {
+  const { comBom } = require("../src/uniao");
+  const semBom = Buffer.from("a;b\nNão;x\n", "utf8");
+  const c1 = comBom(semBom);
+  assert.deepStrictEqual([...c1.slice(0, 3)], [0xef, 0xbb, 0xbf]);
+  assert.strictEqual(c1.length, semBom.length + 3);
+  // idempotente
+  const c2 = comBom(c1);
+  assert.strictEqual(c2.length, c1.length);
+  assert.deepStrictEqual([...c2.slice(0, 3)], [0xef, 0xbb, 0xbf]);
+});
+
+test("comBom aceita string e preserva a acentuacao em UTF-8", () => {
+  const { comBom } = require("../src/uniao");
+  const b = comBom("Não;Serviço\n");
+  // depois do BOM, "Não" tem que ser c3 a3 (UTF-8 correto, sem duplo-encode)
+  assert.deepStrictEqual([...b.slice(3, 7)], [0x4e, 0xc3, 0xa3, 0x6f]);
+});
+
+test("parseCsv le de volta arquivo COM BOM sem sujar a primeira coluna", () => {
+  const { comBom, serializeCsv } = require("../src/uniao");
+  const buf = comBom(serializeCsv(["Contrato", "b"], [["X", "Não"]]));
+  const { header, rows } = parseCsv(buf);
+  assert.strictEqual(header[0], "Contrato", "BOM nao pode virar parte do nome da coluna");
+  assert.strictEqual(rows[0][1], "Não");
+});

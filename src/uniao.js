@@ -65,6 +65,21 @@ function serializeCsv(header, rows, sep = ";") {
   return `${linhas.join("\n")}\n`;
 }
 
+// Garante o BOM de UTF-8 no inicio do arquivo.
+//
+// POR QUE ISSO IMPORTA: sem BOM, o Excel (e qualquer leitor que assuma a
+// codepage do sistema) le o arquivo como Latin-1 e mostra "NÃ£o" em vez de
+// "Não" — o conteudo esta certo, a leitura e que erra. O CSV que o GPM entrega
+// vem com BOM; o parser daqui tira o BOM na leitura, entao ele TEM que ser
+// recolocado na escrita, senao a base sai com acentuacao quebrada na tela.
+const BOM_UTF8 = Buffer.from([0xef, 0xbb, 0xbf]);
+
+function comBom(conteudo) {
+  const buf = Buffer.isBuffer(conteudo) ? conteudo : Buffer.from(String(conteudo), "utf8");
+  if (buf.length >= 3 && buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf) return buf;
+  return Buffer.concat([BOM_UTF8, buf]);
+}
+
 // Chave de coluna: nome + ocorrencia, porque um header pode repetir nome
 // (ex.: 2023 tem "6.1 - Todas as cavas..." e "6.1 - Todas as cavas...." ).
 function chavesDeHeader(header) {
@@ -126,4 +141,4 @@ function idxCodChecklist(header) {
   return i >= 0 ? i : 3;
 }
 
-module.exports = { parseCsv, serializeCsv, unir, chavesDeHeader, idxCodChecklist };
+module.exports = { parseCsv, serializeCsv, unir, chavesDeHeader, idxCodChecklist, comBom };
