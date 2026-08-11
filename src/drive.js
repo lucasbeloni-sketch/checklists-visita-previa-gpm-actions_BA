@@ -129,4 +129,24 @@ async function baixarCsv(nome, cfg) {
   return Buffer.from(r.data);
 }
 
-module.exports = { uploadCsv, listarCsv, baixarCsv };
+// Manda um arquivo da pasta pra lixeira (reversivel: o Drive guarda por 30 dias).
+// Nao usamos delete definitivo em nada que o usuario possa querer de volta.
+async function enviarParaLixeira(nome, cfg) {
+  const drive = await getDrive();
+  const arquivos = await listarCsv(cfg);
+  const alvos = arquivos.filter((f) => f.name === nome);
+  if (!alvos.length) {
+    console.warn(`[drive] "${nome}" nao esta na pasta; nada a remover.`);
+    return { removidos: 0 };
+  }
+  for (const a of alvos) {
+    await withRetry(
+      () => drive.files.update({ fileId: a.id, requestBody: { trashed: true }, supportsAllDrives: true }),
+      { label: "trash" }
+    );
+    console.log(`[drive] "${nome}" (id=${a.id}) movido pra lixeira.`);
+  }
+  return { removidos: alvos.length };
+}
+
+module.exports = { uploadCsv, listarCsv, baixarCsv, enviarParaLixeira };

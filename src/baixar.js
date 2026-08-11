@@ -7,9 +7,12 @@
 
 const { chromium } = require("playwright");
 const cfg = require("../config.json");
+const layout = require("../layout.json");
 const { login, baixarChecklists, dump } = require("./gpm");
 const { uploadCsv } = require("./drive");
 const { mesAnoD1, intervaloD1, fmtBR, validarIntervalo } = require("./util");
+const { parseCsv, serializeCsv } = require("./uniao");
+const { reprojetar, validar } = require("./padronizar");
 
 // Retenta fn ate `tentativas` vezes (GPM e flaky). Loga cada tentativa.
 async function comRetry(fn, label, tentativas = 2) {
@@ -73,12 +76,31 @@ async function comRetry(fn, label, tentativas = 2) {
       throw new Error(`AVISO_INTERVALO: alguma "Data Execução" caiu fora de ${mesAno} (min=${iv.min}, max=${iv.max}). NAO envio ao Drive.`);
     }
 
+    // Padroniza no layout da base (layout.json, 90 colunas) antes de subir. A
+    // pasta e carregada por uma plataforma, entao todo arquivo tem que ter o
+    // MESMO cabecalho: as 78 colunas que o GPM exporta hoje + as 12 perguntas
+    // aposentadas (vazias nos meses novos, preenchidas no historico).
+    // Se o GPM ganhar pergunta nova, ela e anexada no fim e o run avisa — nunca
+    // descartada.
+    const origem = parseCsv(buffer);
+    const destino = reprojetar(layout.colunas, origem);
+    const v = validar(origem, destino);
+    if (!v.ok) {
+      throw new Error(`padronizacao no layout perdeu dado: ${v.problemas.slice(0, 5).join(" | ")}`);
+    }
+    if (destino.anexadas.length) {
+      console.warn(`[run] ATENCAO: ${destino.anexadas.length} coluna(s) nova(s) no export, anexada(s) no fim: ${destino.anexadas.join(" | ")}`);
+      console.warn("[run] regenere o layout.json pra manter a pasta homogenea.");
+    }
+    const bufferFinal = Buffer.from(serializeCsv(destino.header, destino.rows), "utf8");
+    console.log(`[run] padronizado: ${origem.header.length} -> ${destino.header.length} colunas, ${destino.rows.length} linhas (${bufferFinal.length} bytes)`);
+
     if (dryRun) {
-      console.log(`[run] DRY_RUN: ${nomeFinal} (${bytes} bytes, ${linhas} linhas) NAO enviado ao Drive.`);
-      resultado = { nomeFinal, md5, bytes, acao: "dry-run" };
+      console.log(`[run] DRY_RUN: ${nomeFinal} (${bufferFinal.length} bytes, ${linhas} linhas) NAO enviado ao Drive.`);
+      resultado = { nomeFinal, md5, bytes: bufferFinal.length, acao: "dry-run" };
     } else {
-      const r = await uploadCsv(buffer, nomeFinal, cfg);
-      resultado = { nomeFinal, md5, bytes, acao: r.acao };
+      const r = await uploadCsv(bufferFinal, nomeFinal, cfg);
+      resultado = { nomeFinal, md5, bytes: bufferFinal.length, acao: r.acao };
     }
   } catch (e) {
     falhou = true;

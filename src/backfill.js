@@ -41,6 +41,8 @@ const { uploadCsv, listarCsv, baixarCsv } = require("./drive");
 const { analisar } = require("./faltantes");
 const { mesclar, separaHeader, normalizaTexto, chavesDe } = require("./merge");
 const { parseCsv, serializeCsv, unir, idxCodChecklist } = require("./uniao");
+const layout = require("./../layout.json");
+const { reprojetar, validar } = require("./padronizar");
 
 // Onde ficam os exports brutos de cada dia (subem como artefato do run).
 const DEBUG_DIR = path.join(process.cwd(), "debug");
@@ -205,31 +207,31 @@ async function alvosDeDIAS(lista) {
             throw new Error(`export tem MENOS linhas (${linhas}) que o arquivo atual (${linhasAntes}) — nao substituo ${alvo.arquivo}; investigue antes`);
           }
 
-          // Guarda de COLUNAS. O questionario do checklist mudou ao longo do
-          // tempo e o export de hoje pode trazer MENOS colunas que o arquivo
-          // historico (visto no run 31425684056: 2025.csv tem 81 colunas, o
-          // export de 31/12/2025 hoje veio com 77). Substituir nesse caso
-          // APAGA respostas de perguntas que sairam do formulario — perda de
-          // dado silenciosa. So substituimos se o export tiver as mesmas
-          // colunas ou mais.
-          if (antes) {
-            const hAntes = separaHeader(normalizaTexto(antes)).header;
-            const hNovo = separaHeader(normalizaTexto(r.buffer)).header;
-            const cAntes = hAntes.split(";").length;
-            const cNovo = hNovo.split(";").length;
-            if (cNovo < cAntes) {
-              throw new Error(`export tem MENOS colunas (${cNovo}) que ${alvo.arquivo} (${cAntes}) — substituir apagaria respostas de perguntas que sairam do questionario. NAO substituo.`);
-            }
-            if (hAntes !== hNovo) {
-              console.warn(`[backfill] ${alvo.arquivo}: cabecalho MUDOU (${cAntes} -> ${cNovo} colunas). Substituindo de todo jeito porque nao houve perda de coluna, mas confira quem consome esse arquivo.`);
-            }
+          // Padroniza no layout da base (90 colunas) antes de comparar e subir —
+          // igual ao robo diario. Isso resolve de vez o risco antigo de
+          // substituir um arquivo por um export mais pobre: as perguntas
+          // aposentadas continuam existindo como coluna, e as respostas que o
+          // arquivo ja tinha nelas nao sao perdidas porque o export novo do mes
+          // nao as sobrescreve — ele SO cobre o mes, e o mes inteiro vem no
+          // export. Se algum dia o export vier com pergunta nova, ela e anexada
+          // no fim e o run avisa.
+          const origem = parseCsv(r.buffer);
+          const destino = reprojetar(layout.colunas, origem);
+          const v = validar(origem, destino);
+          if (!v.ok) {
+            throw new Error(`padronizacao perdeu dado em ${alvo.arquivo}: ${v.problemas.slice(0, 5).join(" | ")}`);
           }
+          if (destino.anexadas.length) {
+            console.warn(`[backfill] ATENCAO: coluna(s) nova(s) anexada(s) no fim: ${destino.anexadas.join(" | ")} — regenere o layout.json.`);
+          }
+          const bufferFinal = Buffer.from(serializeCsv(destino.header, destino.rows), "utf8");
+
           if (dryRun) {
-            console.log(`[backfill] DRY_RUN: ${alvo.arquivo} ficaria com ${linhas} linhas (tinha ${linhasAntes}, +${linhas - linhasAntes}).`);
+            console.log(`[backfill] DRY_RUN: ${alvo.arquivo} ficaria com ${linhas} linhas x ${destino.header.length} colunas (tinha ${linhasAntes}, +${linhas - linhasAntes}).`);
             manifesto.push({ ...alvo, status: "dry-run-replace", linhas, delta: linhas - linhasAntes });
           } else {
-            const up = await uploadCsv(r.buffer, alvo.arquivo, cfg);
-            console.log(`[backfill] ${alvo.arquivo} ${up.acao}: ${linhas} linhas (tinha ${linhasAntes}, +${linhas - linhasAntes}).`);
+            const up = await uploadCsv(bufferFinal, alvo.arquivo, cfg);
+            console.log(`[backfill] ${alvo.arquivo} ${up.acao}: ${linhas} linhas x ${destino.header.length} colunas (tinha ${linhasAntes}, +${linhas - linhasAntes}).`);
             manifesto.push({ ...alvo, status: `ok-${up.acao}`, linhas, delta: linhas - linhasAntes });
           }
         } else {

@@ -13,7 +13,9 @@
     "faltantes": "node tools/dias-faltantes.js",
     "diag": "node tools/diag-filtros.js",
     "auditar": "node tools/auditar.js",
-    "conferir": "node tools/conferir-mes.js"
+    "conferir": "node tools/conferir-mes.js",
+    "analisar": "node tools/analisar-padronizacao.js",
+    "padronizar": "node tools/padronizar-pasta.js"
   },
   "dependencies": {
     "adm-zip": "^0.5.16",
