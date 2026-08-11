@@ -121,6 +121,59 @@ GPM_BA_USER=... GPM_BA_PASS=... DRY_RUN=1 npm start
 Em qualquer falha, screenshot + HTML da tela sobem como artefato `debug` do run
 e uma issue rolante é aberta/comentada.
 
+## Layout da base (layout.json)
+
+A pasta é carregada por uma plataforma, então **todo arquivo tem o mesmo
+cabeçalho**: 90 colunas, definidas em `layout.json` e versionadas no repo.
+
+| | |
+|---|---|
+| 78 primeiras | o que o GPM exporta hoje, na ordem dele |
+| 12 últimas | perguntas **aposentadas** do formulário, mantidas no fim |
+
+As 12 aposentadas existem porque o export traz uma coluna por pergunta e só as
+perguntas presentes nos registros do período — os arquivos antigos tinham
+questionários diferentes (2023: 69 colunas, 2024: 87, 2025: 81, 2026: 78).
+Conformar tudo às 78 atuais descartaria **22.671 respostas** de 9 perguntas
+reais (sinal telefônico, vegetação/APP, cavas). Com as 12 no fim, nada se perde
+e a plataforma lê as 78 primeiras.
+
+O layout é superconjunto de todos os arquivos, então padronizar nunca descarta
+resposta — e `src/padronizar.js` **prova** isso a cada arquivo: compara as
+células preenchidas coluna a coluna, antes e depois, e aborta em qualquer
+diferença.
+
+**Se o GPM ganhar pergunta nova**, ela é anexada no fim e o run avisa
+(`ATENCAO: coluna(s) nova(s)`). Nada é descartado em silêncio; aí regenere o
+layout pra pasta voltar a ser homogênea.
+
+### Estado da base (11/08/2026)
+
+| Arquivo | Linhas |
+|---|---|
+| `2023.csv` | 1.990 |
+| `2024.csv` | 3.820 |
+| `2025.csv` | 4.686 |
+| `01`–`08.2026.csv` | 2.340 |
+| **total** | **12.836** — 12.836 `cod_checklist` únicos, zero repetido |
+
+Estrutura: ano fechado num arquivo por ano, ano corrente um arquivo por mês (a
+consolidação dos meses no arquivo do ano é manual). O robô diário mantém o mês
+corrente e já grava no layout de 90 colunas.
+
+### Ferramentas de base
+
+| Comando | O que faz |
+|---|---|
+| `npm run auditar` | confere alinhamento estrutural de todos os CSVs (só lê o Drive) |
+| `npm run analisar` | mostra o custo de conformar ao layout: perguntas fora e respostas em jogo |
+| `npm run padronizar` | reprojeta a pasta no layout (aceita `DRY_RUN=1`) |
+| `npm run conferir` | reexporta um mês do GPM e compara célula a célula com o arquivo da pasta |
+
+A conferência contra o GPM (junho de 2023, 2024 e 2025) deu **0 divergência em
+77.676 células** — é o que autoriza reprojetar por nome de coluna: os arquivos
+existentes estão com cada resposta sob a coluna certa.
+
 ## Backfill dos dias perdidos
 
 A Skill manual exportava com a Data Fim caindo às `00:00`, então **o último dia
