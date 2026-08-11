@@ -32,12 +32,18 @@
 // no fim imprime um manifesto (dia, arquivo, status, linhas) — o mesmo tipo de
 // registro que a Skill pedia pra manter em backfill grande.
 
+const fs = require("fs");
+const path = require("path");
 const { chromium } = require("playwright");
 const cfg = require("./../config.json");
 const { login, baixarChecklists, dump } = require("./gpm");
 const { uploadCsv, listarCsv, baixarCsv } = require("./drive");
 const { analisar } = require("./faltantes");
-const { mesclar, separaHeader, normalizaTexto, chavesDe, soNovas } = require("./merge");
+const { mesclar, separaHeader, normalizaTexto, chavesDe } = require("./merge");
+const { parseCsv, serializeCsv, unir, idxCodChecklist } = require("./uniao");
+
+// Onde ficam os exports brutos de cada dia (subem como artefato do run).
+const DEBUG_DIR = path.join(process.cwd(), "debug");
 const { mesAnoD1, contarLinhasDados } = require("./util");
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -98,9 +104,12 @@ async function alvosDeDIAS(lista) {
   // Modo SAIDA: pre-carrega as chaves (cod_checklist) de cada arquivo de destino
   // e do proprio arquivo de saida, se ja existir. Assim uma linha que ja esta na
   // base nao e duplicada aqui.
+  //
+  // As partes NAO sao concatenadas como texto: cada dia vem do GPM com um
+  // conjunto de perguntas diferente (67 a 78 colunas, medido no run
+  // 31483369768), entao juntamos no fim com uniao POR NOME de coluna.
   const chavesPorArquivo = {};
-  let headerSaida = null;
-  let corpoSaida = "";
+  const partes = [];              // [{ header: string[], rows: string[][] }]
   const chavesSaida = new Set();
   if (saida) {
     for (const nome of [...new Set(alvos.map((a) => a.arquivo))]) {
@@ -110,11 +119,11 @@ async function alvosDeDIAS(lista) {
     }
     const jaExiste = await baixarCsv(saida, cfg);
     if (jaExiste) {
-      const sep = separaHeader(normalizaTexto(jaExiste));
-      headerSaida = sep.header;
-      corpoSaida = sep.corpo.endsWith("\n") || sep.corpo === "" ? sep.corpo : `${sep.corpo}\n`;
-      for (const k of chavesDe(jaExiste)) chavesSaida.add(k);
-      console.log(`[backfill] ${saida} ja existe: ${chavesSaida.size} linha(s); vamos so acrescentar.`);
+      const p = parseCsv(jaExiste);
+      partes.push(p);
+      const ic = idxCodChecklist(p.header);
+      for (const r of p.rows) chavesSaida.add(`cod:${(r[ic] || "").trim()}`);
+      console.log(`[backfill] ${saida} ja existe: ${p.rows.length} linha(s), ${p.header.length} colunas; vamos acrescentar em cima.`);
     }
   }
 
@@ -149,37 +158,40 @@ async function alvosDeDIAS(lista) {
         }
 
         if (saida) {
-          // Estrategia C: acumula as linhas novas num arquivo NOVO. Nada
-          // existente e tocado, entao nao ha risco de desalinhar coluna nem de
-          // apagar resposta antiga.
-          const sep = separaHeader(normalizaTexto(r.buffer));
-          if (headerSaida === null) {
-            headerSaida = sep.header;
-            console.log(`[backfill] cabecalho da saida fixado: ${headerSaida.split(";").length} colunas`);
-          } else if (sep.header !== headerSaida) {
-            const msg = `cabecalho do export (${sep.header.split(";").length} col) difere do ja acumulado em ${saida} (${headerSaida.split(";").length} col)`;
-            console.warn(`[backfill] ${rotulo}: PULADO — ${msg}`);
-            manifesto.push({ ...alvo, status: `skip: ${msg}`, linhas: 0 });
-            continue;
-          }
+          // Estrategia C: guarda as linhas novas deste dia como uma PARTE. Nada
+          // existente e tocado. A juncao acontece no fim, por uniao de colunas
+          // por NOME — cada dia tem um conjunto de perguntas diferente, entao
+          // concatenar texto desalinharia tudo.
+          const p = parseCsv(r.buffer);
+          const ic = idxCodChecklist(p.header);
 
-          // Nao repete linha que ja esta no arquivo anual nem na propria saida.
-          const chaves = new Set([...(chavesPorArquivo[alvo.arquivo] || []), ...chavesSaida]);
-          const antesDoSet = chaves.size;
-          const { novas, dup } = soNovas(r.buffer, chaves);
-          for (const l of novas) {
-            const k = l.split(";")[3];
-            chavesSaida.add(/^\d{3,}$/.test((k || "").trim()) ? `cod:${k.trim()}` : `linha:${l}`);
+          // Guarda o export bruto: se algo der errado na juncao, nao precisa
+          // reexportar os 26 dias (cada um e um export no GPM).
+          try {
+            fs.mkdirSync(DEBUG_DIR, { recursive: true });
+            fs.writeFileSync(path.join(DEBUG_DIR, `dia-${alvo.dataBR.replace(/\//g, "-")}.csv`), r.buffer);
+          } catch (_) {}
+
+          // Nao repete linha que ja esta no arquivo anual nem no que ja
+          // acumulamos aqui.
+          const jaNaBase = chavesPorArquivo[alvo.arquivo] || new Set();
+          const novas = [];
+          let dup = 0;
+          for (const linhaArr of p.rows) {
+            const cod = (linhaArr[ic] || "").trim();
+            const chave = /^\d{3,}$/.test(cod) ? `cod:${cod}` : `linha:${linhaArr.join(";")}`;
+            if (jaNaBase.has(chave) || chavesSaida.has(chave)) { dup++; continue; }
+            chavesSaida.add(chave);
+            novas.push(linhaArr);
           }
-          void antesDoSet;
 
           if (!novas.length) {
-            console.log(`[backfill] ${rotulo}: nada novo (todas as ${dup} linha(s) do dia ja estao na base).`);
+            console.log(`[backfill] ${rotulo}: nada novo (as ${dup} linha(s) do dia ja estao na base).`);
             manifesto.push({ ...alvo, status: "nada-novo", linhas: 0 });
             continue;
           }
-          corpoSaida += `${novas.join("\n")}\n`;
-          console.log(`[backfill] ${rotulo}: +${novas.length} linha(s) para ${saida} (${dup} ja existiam na base).`);
+          partes.push({ header: p.header, rows: novas });
+          console.log(`[backfill] ${rotulo}: +${novas.length} linha(s) (${dup} ja na base) | ${p.header.length} colunas neste export`);
           manifesto.push({ ...alvo, status: dryRun ? "dry-run-saida" : "ok-saida", linhas: novas.length });
         } else if (ehMensal) {
           // Estrategia A: o export do mes inteiro SUBSTITUI o arquivo do mes.
@@ -249,6 +261,35 @@ async function alvosDeDIAS(lista) {
     }
   } finally {
     await browser.close();
+  }
+
+  // Modo SAIDA: junta as partes por uniao de colunas e grava UMA vez, no fim.
+  if (saida) {
+    const totalLinhas = partes.reduce((a, p) => a + p.rows.length, 0);
+    if (!totalLinhas) {
+      console.log(`[backfill] nada novo para ${saida}; nao gravo.`);
+    } else {
+      const u = unir(partes);
+      console.log(`[backfill] uniao de ${partes.length} parte(s): ${u.rows.length} linhas, ${u.totalColunas} colunas (colunas por parte: ${u.colunasPorParte.join(", ")})`);
+      const texto = serializeCsv(u.header, u.rows);
+
+      // Sanidade: nenhuma linha pode ter mais campos que o cabecalho, e o
+      // numero de linhas tem que bater com o que acumulamos.
+      const conferido = parseCsv(texto);
+      if (conferido.rows.length !== u.rows.length) {
+        throw new Error(`uniao inconsistente: gerei ${u.rows.length} linhas mas reler devolveu ${conferido.rows.length}`);
+      }
+      if (conferido.header.length !== u.totalColunas) {
+        throw new Error(`uniao inconsistente: cabecalho com ${conferido.header.length} colunas, esperava ${u.totalColunas}`);
+      }
+
+      if (dryRun) {
+        console.log(`[backfill] DRY_RUN: ${saida} ficaria com ${u.rows.length} linha(s) e ${u.totalColunas} colunas (${texto.length} bytes). NAO gravado.`);
+      } else {
+        const up = await uploadCsv(Buffer.from(texto, "utf8"), saida, cfg);
+        console.log(`[backfill] ${saida} ${up.acao}: ${u.rows.length} linha(s), ${u.totalColunas} colunas.`);
+      }
+    }
   }
 
   console.log("\n=== Manifesto ===");
