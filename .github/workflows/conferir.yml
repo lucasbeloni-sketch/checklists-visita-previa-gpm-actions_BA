@@ -1,0 +1,51 @@
+name: Conferir alinhamento de colunas (manual)
+
+# Reexporta um mes do GPM e compara celula a celula contra o arquivo da pasta,
+# casando por cod_checklist e por nome de coluna. Nao grava nada.
+# Serve pra responder: as respostas dos arquivos antigos estao sob a coluna certa?
+on:
+  workflow_dispatch:
+    inputs:
+      meses:
+        description: 'Meses a conferir, mm/aaaa separados por virgula (ex. 06/2023,06/2024,06/2025)'
+        type: string
+        default: "06/2023,06/2024,06/2025"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: checklists-visita-previa-ba
+  cancel-in-progress: false
+
+jobs:
+  conferir:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "20"
+      - name: Install deps
+        run: npm ci || npm install
+      - name: Install Chromium (Playwright)
+        run: npx playwright install --with-deps chromium
+      - name: Conferir
+        shell: bash
+        run: set -o pipefail; npm run conferir 2>&1 | tee conferir.log
+        env:
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          GPM_BA_USER: ${{ secrets.GPM_BA_USER }}
+          GPM_BA_PASS: ${{ secrets.GPM_BA_PASS }}
+          MESES: ${{ inputs.meses }}
+      - name: Upload log + debug
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: conferir
+          path: |
+            conferir.log
+            debug/
+          if-no-files-found: warn
+          retention-days: 14
