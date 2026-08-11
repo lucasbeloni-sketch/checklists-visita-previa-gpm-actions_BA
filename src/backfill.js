@@ -7,6 +7,14 @@
 //        Mesmo numero de exports que pegar so o dia, e sem risco de merge: o
 //        arquivo sai inteiro de um unico export, colunas coerentes por definicao.
 //
+//  C) SAIDA=<nome.csv> (modo "dias recuperados", usado pra 2023-2025)
+//     -> exporta so o dia perdido de cada mes e junta TUDO num arquivo NOVO,
+//        sem tocar em nenhum arquivo existente. Necessario porque o
+//        questionario mudou: os anuais tem 81/69 colunas e o export de hoje tem
+//        77, entao nao existe encaixe correto dentro deles (ver estrategia B).
+//        Cada linha so entra se o cod_checklist ainda nao existir no arquivo
+//        anual correspondente — o arquivo de saida e exatamente o que falta.
+//
 //  B) destino aaaa.csv (2023/2024/2025, arquivo = ano inteiro concatenado)
 //     -> exporta SO o dia perdido e MESCLA no arquivo (src/merge.js), com
 //        guarda de cabecalho. Reexportar o ano custaria 12 exports por ano e
@@ -29,7 +37,7 @@ const cfg = require("./../config.json");
 const { login, baixarChecklists, dump } = require("./gpm");
 const { uploadCsv, listarCsv, baixarCsv } = require("./drive");
 const { analisar } = require("./faltantes");
-const { mesclar, separaHeader, normalizaTexto } = require("./merge");
+const { mesclar, separaHeader, normalizaTexto, chavesDe, soNovas } = require("./merge");
 const { mesAnoD1, contarLinhasDados } = require("./util");
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -73,6 +81,7 @@ async function alvosDeDIAS(lista) {
 (async () => {
   const headless = !process.env.HEADED;
   const dryRun = !!process.env.DRY_RUN;
+  const saida = process.env.SAIDA || null;   // modo "dias recuperados"
 
   const alvos = process.env.DIAS ? await alvosDeDIAS(process.env.DIAS) : await descobrirBuracos();
   if (!alvos.length) {
@@ -80,10 +89,33 @@ async function alvosDeDIAS(lista) {
     return;
   }
 
-  console.log(`[backfill] ${alvos.length} dia(s) alvo | dryRun=${dryRun} | headless=${headless}`);
+  console.log(`[backfill] ${alvos.length} dia(s) alvo | dryRun=${dryRun} | headless=${headless}${saida ? ` | SAIDA=${saida}` : ""}`);
   for (const a of alvos) {
-    const modo = /^\d{2}\.\d{4}\.csv$/i.test(a.arquivo) ? "mes-inteiro (replace)" : "dia (merge)";
-    console.log(`   ${a.dataBR} -> ${a.arquivo} [${modo}]`);
+    const modo = saida ? `dia -> ${saida}` : (/^\d{2}\.\d{4}\.csv$/i.test(a.arquivo) ? "mes-inteiro (replace)" : "dia (merge)");
+    console.log(`   ${a.dataBR} -> ${modo}`);
+  }
+
+  // Modo SAIDA: pre-carrega as chaves (cod_checklist) de cada arquivo de destino
+  // e do proprio arquivo de saida, se ja existir. Assim uma linha que ja esta na
+  // base nao e duplicada aqui.
+  const chavesPorArquivo = {};
+  let headerSaida = null;
+  let corpoSaida = "";
+  const chavesSaida = new Set();
+  if (saida) {
+    for (const nome of [...new Set(alvos.map((a) => a.arquivo))]) {
+      const buf = await baixarCsv(nome, cfg);
+      chavesPorArquivo[nome] = buf ? chavesDe(buf) : new Set();
+      console.log(`[backfill] ${nome}: ${chavesPorArquivo[nome].size} cod_checklist ja na base`);
+    }
+    const jaExiste = await baixarCsv(saida, cfg);
+    if (jaExiste) {
+      const sep = separaHeader(normalizaTexto(jaExiste));
+      headerSaida = sep.header;
+      corpoSaida = sep.corpo.endsWith("\n") || sep.corpo === "" ? sep.corpo : `${sep.corpo}\n`;
+      for (const k of chavesDe(jaExiste)) chavesSaida.add(k);
+      console.log(`[backfill] ${saida} ja existe: ${chavesSaida.size} linha(s); vamos so acrescentar.`);
+    }
   }
 
   const browser = await chromium.launch({ headless });
@@ -101,8 +133,8 @@ async function alvosDeDIAS(lista) {
       const rotulo = `${alvo.dataBR} -> ${alvo.arquivo}`;
       console.log(`\n########## ${rotulo} ##########`);
 
-      // Intervalo exportado: mes inteiro (estrategia A) ou so o dia (B).
-      const intervalo = ehMensal
+      // Intervalo exportado: mes inteiro (estrategia A) ou so o dia (B e C).
+      const intervalo = (ehMensal && !saida)
         ? { inicio: { ano, mes, dia: 1 }, fim: { ano, mes, dia } }
         : { inicio: { ano, mes, dia }, fim: { ano, mes, dia } };
       const mesAno = `${p2(mes)}.${ano}`;
@@ -116,7 +148,40 @@ async function alvosDeDIAS(lista) {
           continue;
         }
 
-        if (ehMensal) {
+        if (saida) {
+          // Estrategia C: acumula as linhas novas num arquivo NOVO. Nada
+          // existente e tocado, entao nao ha risco de desalinhar coluna nem de
+          // apagar resposta antiga.
+          const sep = separaHeader(normalizaTexto(r.buffer));
+          if (headerSaida === null) {
+            headerSaida = sep.header;
+            console.log(`[backfill] cabecalho da saida fixado: ${headerSaida.split(";").length} colunas`);
+          } else if (sep.header !== headerSaida) {
+            const msg = `cabecalho do export (${sep.header.split(";").length} col) difere do ja acumulado em ${saida} (${headerSaida.split(";").length} col)`;
+            console.warn(`[backfill] ${rotulo}: PULADO — ${msg}`);
+            manifesto.push({ ...alvo, status: `skip: ${msg}`, linhas: 0 });
+            continue;
+          }
+
+          // Nao repete linha que ja esta no arquivo anual nem na propria saida.
+          const chaves = new Set([...(chavesPorArquivo[alvo.arquivo] || []), ...chavesSaida]);
+          const antesDoSet = chaves.size;
+          const { novas, dup } = soNovas(r.buffer, chaves);
+          for (const l of novas) {
+            const k = l.split(";")[3];
+            chavesSaida.add(/^\d{3,}$/.test((k || "").trim()) ? `cod:${k.trim()}` : `linha:${l}`);
+          }
+          void antesDoSet;
+
+          if (!novas.length) {
+            console.log(`[backfill] ${rotulo}: nada novo (todas as ${dup} linha(s) do dia ja estao na base).`);
+            manifesto.push({ ...alvo, status: "nada-novo", linhas: 0 });
+            continue;
+          }
+          corpoSaida += `${novas.join("\n")}\n`;
+          console.log(`[backfill] ${rotulo}: +${novas.length} linha(s) para ${saida} (${dup} ja existiam na base).`);
+          manifesto.push({ ...alvo, status: dryRun ? "dry-run-saida" : "ok-saida", linhas: novas.length });
+        } else if (ehMensal) {
           // Estrategia A: o export do mes inteiro SUBSTITUI o arquivo do mes.
           const linhas = contarLinhasDados(r.buffer);
           if (linhas < (cfg.minLinhasDados ?? 1)) {

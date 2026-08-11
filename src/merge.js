@@ -144,4 +144,37 @@ function mesclar(destBuf, novoBuf, { dataBR = null, colunaChave = 3, colunaData 
   };
 }
 
-module.exports = { normalizaTexto, separaHeader, linhasLogicas, chaveDaLinha, contaData, mesclar };
+// Conjunto de cod_checklist presentes num CSV. Usado pelo backfill em modo
+// "saida separada": uma linha que ja esta no arquivo anual nao entra no arquivo
+// de dias recuperados (o export de um dia traz tambem linhas de outras datas,
+// porque o filtro do GPM e por Data Servico/Inspecao).
+function chavesDe(buf, colunaChave = 3) {
+  const { corpo } = separaHeader(normalizaTexto(buf));
+  const set = new Set();
+  for (const l of linhasLogicas(corpo)) {
+    const k = chaveDaLinha(l, colunaChave);
+    set.add(k === null ? `linha:${l}` : `cod:${k}`);
+  }
+  return set;
+}
+
+// Separa de `novoBuf` as linhas cuja chave ainda nao aparece em `chaves`
+// (mutado: as novas sao adicionadas). Devolve { header, novas, dup }.
+function soNovas(novoBuf, chaves, colunaChave = 3) {
+  const { header, corpo } = separaHeader(normalizaTexto(novoBuf));
+  const novas = [];
+  let dup = 0;
+  for (const l of linhasLogicas(corpo)) {
+    const k = chaveDaLinha(l, colunaChave);
+    const id = k === null ? `linha:${l}` : `cod:${k}`;
+    if (chaves.has(id)) { dup++; continue; }
+    chaves.add(id);
+    novas.push(l);
+  }
+  return { header, novas, dup };
+}
+
+module.exports = {
+  normalizaTexto, separaHeader, linhasLogicas, chaveDaLinha, contaData, mesclar,
+  chavesDe, soNovas,
+};

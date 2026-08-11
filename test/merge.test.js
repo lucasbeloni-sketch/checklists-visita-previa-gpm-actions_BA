@@ -157,3 +157,37 @@ test("analisar classifica evidencia: dia util zerado = alta, fim de semana sem m
   assert.strictEqual(r2.buracos[0].dataBR, "31/07/2026");
   assert.strictEqual(r2.buracos[0].forca, "alta");
 });
+
+// ---- modo "dias recuperados" (saida separada) ----
+
+test("chavesDe extrai os cod_checklist do arquivo", () => {
+  const { chavesDe } = require("../src/merge");
+  const csv = `${H}\n${linha("111", "01/07/2025")}\n${linha("222", "02/07/2025")}\n`;
+  const k = chavesDe(Buffer.from(csv, "utf8"));
+  assert.strictEqual(k.size, 2);
+  assert.ok(k.has("cod:111") && k.has("cod:222"));
+});
+
+test("soNovas devolve so o que ainda nao esta na base e marca duplicata", () => {
+  const { chavesDe, soNovas } = require("../src/merge");
+  // Base = arquivo anual; export do dia traz 1 linha ja existente + 2 novas.
+  const base = `${H}\n${linha("111", "30/12/2025")}\n`;
+  const chaves = chavesDe(Buffer.from(base, "utf8"));
+  const exportDia = `${H}\n${linha("111", "30/12/2025")}\n${linha("222", "31/12/2025")}\n${linha("333", "31/12/2025")}\n`;
+  const r = soNovas(Buffer.from(exportDia, "utf8"), chaves);
+  assert.strictEqual(r.header, H);
+  assert.strictEqual(r.novas.length, 2);
+  assert.strictEqual(r.dup, 1);
+  assert.ok(chaves.has("cod:222"), "chaves novas entram no set (mutacao proposital)");
+});
+
+test("soNovas nao repete entre dias diferentes usando o mesmo set", () => {
+  const { soNovas } = require("../src/merge");
+  const chaves = new Set();
+  const dia1 = `${H}\n${linha("444", "31/08/2024")}\n`;
+  const dia2 = `${H}\n${linha("444", "31/08/2024")}\n${linha("555", "30/09/2024")}\n`;
+  assert.strictEqual(soNovas(Buffer.from(dia1, "utf8"), chaves).novas.length, 1);
+  const r2 = soNovas(Buffer.from(dia2, "utf8"), chaves);
+  assert.strictEqual(r2.novas.length, 1, "a linha 444 ja entrou no dia anterior");
+  assert.strictEqual(r2.dup, 1);
+});

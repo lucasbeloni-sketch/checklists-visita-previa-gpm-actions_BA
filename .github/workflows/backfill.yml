@@ -9,6 +9,10 @@ on:
         description: 'Dias especificos (dd/mm/aaaa, separados por virgula). Vazio = todos os buracos detectados na pasta.'
         type: string
         default: ""
+      saida:
+        description: 'Modo dias recuperados: nome do CSV NOVO onde juntar os dias (ex. dias_recuperados_2023-2025.csv). Vazio = mexe nos arquivos existentes.'
+        type: string
+        default: ""
       dry_run:
         description: "Ensaio: exporta e mostra o que mudaria, sem gravar no Drive"
         type: boolean
@@ -60,6 +64,7 @@ jobs:
           GPM_USER: ${{ secrets.GPM_USER }}
           GPM_PASS: ${{ secrets.GPM_PASS }}
           DIAS: ${{ inputs.dias }}
+          SAIDA: ${{ inputs.saida }}
           DRY_RUN: ${{ inputs.dry_run && '1' || '' }}
 
       # O manifesto (dia;arquivo;status;linhas) fica no log; sobe sempre, mesmo
