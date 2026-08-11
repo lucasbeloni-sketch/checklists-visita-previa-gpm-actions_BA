@@ -109,6 +109,21 @@ GPM_BA_USER=... GPM_BA_PASS=... DRY_RUN=1 npm start
 | `npm test` | testes unitários das datas/parse (sem browser) |
 | `npm run inspect` | calibra seletores da tela |
 | `npm run check` | valida acesso ao Drive e lista a pasta |
+| `npm run carimbar` | grava só o timestamp na planilha de controle (valida acesso ao Sheets) |
+
+## Timestamp de última execução
+
+No **fim** de todo run bem-sucedido (inclusive mês sem registros, marcado
+`(sem registros)`), o robô carimba data/hora BRT em `BD_Config!C8` da planilha
+`1-_lTKT4wSDlJtTXkF1tLHstV9h-S3Yq_2cE8jOIC3kI` — quem olha a planilha vê quando
+a rotina rodou por último sem abrir o GitHub Actions.
+
+- Configurável em `config.json` → `timestamp` (`spreadsheetId`, `aba`, `celula`).
+- `DRY_RUN=1` e runs que falharam **não** carimbam.
+- Escopo `spreadsheets` (não é o do Drive): a service account precisa de acesso
+  **Editor** na planilha. Sem acesso, o run diário só emite warning
+  `[timestamp] NAO consegui gravar` — não falha, porque o CSV já foi enviado.
+- Workflow manual **Carimbar timestamp** roda só esse passo, pra testar acesso.
 
 ## Guardas contra sobrescrever o mês com lixo
 

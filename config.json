@@ -11,6 +11,14 @@
   "_comentario_destino": "Pasta Checklists_Visita_Previa em G:\\Drives compartilhados\\PCP\\Time CCM - BA\\Controle\\Arquivos. A service account precisa de acesso EDITOR nela (Shared Drive do BA, diferente do CE).",
   "destFolderId": "1Mw44sdaQTsyuGeuttNPJVOIK_68asTvL",
   "timezone": "America/Sao_Paulo",
+
+  "_comentario_timestamp": "Carimbo de 'ultima execucao' gravado no FIM do run (src/timestamp.js) via Sheets API. A service account precisa de acesso EDITOR nesta planilha — e um escopo diferente do Drive (spreadsheets). Falha ao carimbar nao derruba o run: o CSV ja foi pro Drive antes.",
+  "timestamp": {
+    "spreadsheetId": "1-_lTKT4wSDlJtTXkF1tLHstV9h-S3Yq_2cE8jOIC3kI",
+    "aba": "BD_Config",
+    "celula": "C8"
+  },
+
   "zipPattern": "Checklists PerguntaResposta",
   "minLinhasDados": 1,
 

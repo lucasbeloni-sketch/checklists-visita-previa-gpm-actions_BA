@@ -1,0 +1,30 @@
+name: Carimbar timestamp (manual)
+
+# Roda tools/carimbar.js: grava o timestamp em BD_Config!C8 da planilha de
+# controle e sai. Nao toca no GPM nem no Drive. Serve pra validar que a service
+# account tem acesso EDITOR na planilha — no run diario, falha de carimbo e
+# so warning (o CSV do mes ja foi enviado antes).
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  carimbar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "20"
+
+      - name: Install deps
+        run: npm ci || npm install
+
+      - name: Carimba
+        run: npm run carimbar
+        env:
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}

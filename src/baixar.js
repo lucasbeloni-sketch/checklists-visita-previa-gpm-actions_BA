@@ -10,6 +10,7 @@ const cfg = require("../config.json");
 const layout = require("../layout.json");
 const { login, baixarChecklists, dump } = require("./gpm");
 const { uploadCsv } = require("./drive");
+const { carimbar } = require("./timestamp");
 const { mesAnoD1, intervaloD1, fmtBR, validarIntervalo } = require("./util");
 const { parseCsv, serializeCsv } = require("./uniao");
 const { reprojetar, validar } = require("./padronizar");
@@ -55,6 +56,9 @@ async function comRetry(fn, label, tentativas = 2) {
     if (r0.vazio) {
       console.log("[run] nada a exportar (periodo sem registros). Encerrando OK sem enviar ao Drive.");
       resultado = { nomeFinal: `${mesAno}.csv`, acao: "vazio-skip", bytes: 0, md5: "-" };
+      // Mes vazio tambem e execucao bem-sucedida: carimba, senao a planilha
+      // faria parecer que o robo parou de rodar.
+      if (!dryRun) await carimbar(cfg, "(sem registros)");
       return; // finally fecha o browser; sai 0
     }
     const { buffer, md5, bytes, linhas, nomeFinal } = r0;
@@ -109,6 +113,10 @@ async function comRetry(fn, label, tentativas = 2) {
   } finally {
     await browser.close();
   }
+
+  // Carimbo de fim de execucao na planilha de controle (BD_Config!C8). So em
+  // run de verdade que deu certo: DRY_RUN e falha nao mexem na planilha.
+  if (!falhou && resultado && !dryRun) await carimbar(cfg);
 
   console.log("\n=== Resumo ===");
   if (resultado) console.log(`  ${resultado.nomeFinal}: ${resultado.acao} (${resultado.bytes} bytes, md5=${resultado.md5})`);

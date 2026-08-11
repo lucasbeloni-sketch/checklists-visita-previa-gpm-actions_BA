@@ -15,7 +15,8 @@
     "auditar": "node tools/auditar.js",
     "conferir": "node tools/conferir-mes.js",
     "analisar": "node tools/analisar-padronizacao.js",
-    "padronizar": "node tools/padronizar-pasta.js"
+    "padronizar": "node tools/padronizar-pasta.js",
+    "carimbar": "node tools/carimbar.js"
   },
   "dependencies": {
     "adm-zip": "^0.5.16",
