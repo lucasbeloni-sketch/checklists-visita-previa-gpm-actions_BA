@@ -33,9 +33,9 @@ jobs:
     # Cada dia e um export no GPM; 31 dias levam bem mais que os 20min do diario.
     timeout-minutes: 120
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v7
         with:
           node-version: "20"
 
@@ -71,7 +71,7 @@ jobs:
       # se um dia falhou no meio — e o registro de o que entrou e o que nao.
       - name: Upload log + manifesto
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: backfill-log
           path: backfill.log
@@ -82,7 +82,7 @@ jobs:
       # sempre, pra nao precisar reexportar tudo se a juncao precisar de ajuste.
       - name: Upload exports brutos + debug
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: debug
           path: debug/
