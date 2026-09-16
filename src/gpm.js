@@ -425,19 +425,34 @@ async function selecionarChoices(root, cfg, campo, alvo, token, tms = {}) {
 }
 
 // O Tipo de Checklist e carregado por AJAX DEPOIS de escolher a Finalidade.
-// Espera o widget do #tipos ter itens de verdade antes de tentar selecionar.
+// Espera o widget do #tipos ter itens DE VERDADE antes de tentar selecionar.
+//
+// O "de verdade" nao e frescura: o widget ja nasce com um item "Selecione..."
+// (placeholder). Contar esse item fazia a espera terminar em milissegundos,
+// antes de o AJAX responder. Aqui o AJAX costuma responder antes do primeiro
+// clique e ninguem notava, mas e corrida — no repo de CE ela perdeu e a tela
+// parecia ter 0 tipos (run 35128440048). Placeholder nao conta, nem no widget
+// nem no <select> nativo.
 async function esperarTiposCarregar(root, cfg, timeout = 20000) {
   const sel = cfg.selectors.tipoChecklist || "#tipos";
   const ok = await root.waitForFunction((s) => {
+    const real = (t) => {
+      const tn = String(t ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+        .toLowerCase().replace(/\s+/g, " ").trim();
+      return tn && !/^selecione/.test(tn);
+    };
     const nativo = document.querySelector(s);
     if (!nativo) return false;
+    if ([...nativo.options].some((o) => o.value && real(o.text))) return true;
     const wrap = nativo.closest("div.choices");
-    const itens = wrap ? wrap.querySelectorAll('.choices__list[role="listbox"] .choices__item--choice') : [];
-    return itens.length > 0 || nativo.options.length > 1;
+    if (!wrap) return false;
+    const itens = [...wrap.querySelectorAll('.choices__list[role="listbox"] .choices__item--choice')];
+    return itens.some((el) => real(el.textContent));
   }, sel, { timeout }).then(() => true).catch(() => false);
   if (!ok) {
-    console.warn("[gpm] Tipo de Checklist parece nao ter carregado opcoes; tento selecionar de todo jeito.");
+    console.warn("[gpm] Tipo de Checklist nao carregou nenhuma opcao real em 20s (so o placeholder).");
   }
+  return ok;
 }
 
 // Relê os 4 inputs hidden de uma vez e confere contra o esperado. Ultimo portao

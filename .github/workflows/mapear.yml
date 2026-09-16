@@ -1,0 +1,63 @@
+name: Mapear filtros da tela (manual)
+
+# Roda tools/listar-tipos.js: loga no GPM, abre a tela GR669 e imprime TODAS as
+# Finalidades e TODOS os Tipos de Checklist (value + texto exato), mais os
+# "vizinhos" que o token de busca do config tambem filtra.
+#
+# Serve pra conferir o config contra a tela sem adivinhacao: o robo so aceita o
+# texto EXATO. O job fica VERMELHO se o config nao bater — o log diz o que
+# trocar. Rode depois de qualquer mexida do GPM nos nomes das opcoes.
+on:
+  workflow_dispatch:
+    inputs:
+      todas:
+        description: "Varrer TODAS as finalidades (nao so a do config). Mais lento."
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: checklists-visita-previa-ba
+  cancel-in-progress: false
+
+jobs:
+  mapear:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "20"
+
+      - name: Install deps
+        run: npm ci || npm install
+
+      - name: Install Chromium (Playwright)
+        run: npx playwright install --with-deps chromium
+
+      - name: Lista finalidades e tipos
+        shell: bash
+        run: set -o pipefail; npm run tipos 2>&1 | tee mapa.log
+        env:
+          GPM_BA_USER: ${{ secrets.GPM_BA_USER }}
+          GPM_BA_PASS: ${{ secrets.GPM_BA_PASS }}
+          GPM_USER: ${{ secrets.GPM_USER }}
+          GPM_PASS: ${{ secrets.GPM_PASS }}
+          TODAS: ${{ inputs.todas && '1' || '' }}
+
+      # if: always() — o mapa e o motivo do run existir; quando o config NAO
+      # bate, o passo acima sai 1 e e justamente ai que queremos a lista.
+      - name: Artefatos (mapa + log + screenshots)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mapa-filtros
+          path: |
+            debug/
+            mapa.log
+          if-no-files-found: ignore
+          retention-days: 14

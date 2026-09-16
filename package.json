@@ -12,6 +12,7 @@
     "backfill": "node src/backfill.js",
     "faltantes": "node tools/dias-faltantes.js",
     "diag": "node tools/diag-filtros.js",
+    "tipos": "node tools/listar-tipos.js",
     "auditar": "node tools/auditar.js",
     "conferir": "node tools/conferir-mes.js",
     "analisar": "node tools/analisar-padronizacao.js",

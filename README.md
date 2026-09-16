@@ -108,8 +108,42 @@ GPM_BA_USER=... GPM_BA_PASS=... DRY_RUN=1 npm start
 | `HEADED=1 npm start` | browser visível (debug local; permite login manual) |
 | `npm test` | testes unitários das datas/parse (sem browser) |
 | `npm run inspect` | calibra seletores da tela |
+| `npm run tipos` | lista Finalidades e Tipos de Checklist reais (value + texto exato) |
 | `npm run check` | valida acesso ao Drive e lista a pasta |
 | `npm run carimbar` | grava só o timestamp na planilha de controle (valida acesso ao Sheets) |
+
+## Conferir os filtros contra a tela (`npm run tipos`)
+
+O robô só aceita o **texto exato** de Finalidade e Tipo de Checklist. Quando o
+GPM renomeia uma opção, a rodada quebra — e o log antigo só dizia "não
+selecionou", sem mostrar o que a tela oferecia de fato.
+
+O workflow manual **Mapear filtros da tela** resolve isso: loga no GPM, abre a
+tela e imprime **todas** as Finalidades e **todos** os Tipos com value + texto
+exato, mais os "vizinhos" que o token de busca do config também filtra — que são
+exatamente os candidatos a serem pegos por engano.
+
+```bash
+GPM_BA_USER=... GPM_BA_PASS=... npm run tipos   # só a Finalidade do config
+TODAS=1 npm run tipos                           # varre todas as finalidades
+```
+
+O job fica **vermelho de propósito** se o config não bater com a tela, e o log
+diz o que trocar. O mapa também vira artefato (`debug/mapa-filtros.json`), e a
+lista serve para atualizar a fixture `OPCOES_TIPOS` do `test/dom.test.js`.
+
+Ferramenta portada do repo irmão de CE
+(`checklists-formulario-vistoria-gpm-actions_CE`), onde nasceu porque a lista de
+tipos de lá é outra e precisava ser descoberta.
+
+### Corrigido junto: a espera do AJAX contava o placeholder
+
+`esperarTiposCarregar` tratava o item **"Selecione..."** como se fosse uma opção
+carregada. A espera terminava em milissegundos, antes de a resposta do AJAX
+chegar. Aqui isso passava despercebido porque o GPM responde antes do primeiro
+clique no widget — mas é uma corrida, e no repo de CE ela perdeu: a tela parecia
+ter zero tipos. Agora placeholder não conta, nem no widget nem no `<select>`
+nativo, e a função devolve se carregou de verdade.
 
 ## Timestamp de última execução
 
