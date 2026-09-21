@@ -2,7 +2,9 @@ name: Checklists Visita Previa GPM BA
 
 on:
   schedule:
-    - cron: "0 */6 * * *"   # a cada 6h (UTC): 00/06/12/18 UTC = 21/03/09/15 BRT
+    - cron: "10 */6 * * *"  # a cada 6h (UTC) no minuto 10: 00/06/12/18 UTC = 21/03/09/15 BRT.
+                            # Minuto escalonado pra nao coincidir com o robo LPT, que
+                            # divide a mesma conta BA do GPM.
   workflow_dispatch:
     inputs:
       dry_run:
